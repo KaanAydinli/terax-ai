@@ -7,7 +7,7 @@ function term(id: number, over: Partial<Tab> = {}): Tab {
     id,
     kind: "terminal",
     spaceId: "s1",
-    title: "shell",
+    title: "Terminal",
     paneTree: { kind: "leaf", id: id * 10 },
     activeLeafId: id * 10,
     ...over,

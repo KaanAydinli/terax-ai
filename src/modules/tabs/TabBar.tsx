@@ -18,8 +18,10 @@ import { cn } from "@/lib/utils";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
 import {
   Cancel01Icon,
+  ChatGptIcon,
   Clock01Icon,
   ComputerTerminal02Icon,
+  ClaudeIcon,
   GitCompareIcon,
   Globe02Icon,
   IncognitoIcon,
@@ -408,6 +410,22 @@ export function TabIcon({ tab }: { tab: Tab }) {
       />
     );
   }
+  if (tab.kind === "terminal" && tab.agent) {
+    const icon =
+      tab.agent === "claude"
+        ? ClaudeIcon
+        : tab.agent === "codex"
+          ? ChatGptIcon
+          : Globe02Icon;
+    return (
+      <HugeiconsIcon
+        icon={icon}
+        size={14}
+        strokeWidth={2}
+        className="shrink-0"
+      />
+    );
+  }
   if (tab.kind === "git-diff" || tab.kind === "git-commit-file") {
     return (
       <HugeiconsIcon
@@ -469,8 +487,8 @@ function TabRenameInput({
   };
 
   // explicit = the user pressed Enter, which pins even the unchanged label. A
-  // plain blur with no change must not freeze the cwd-derived default into a
-  // custom title.
+  // plain blur with no change must not freeze the default label into a custom
+  // title.
   const commit = (value: string, explicit: boolean) => {
     if (!explicit && value.trim() === initial.trim()) finish(onCancel);
     else finish(() => onCommit(value));

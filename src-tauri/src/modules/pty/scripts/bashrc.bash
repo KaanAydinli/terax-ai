@@ -3,9 +3,8 @@
 # Differences vs zsh integration:
 # - We emulate login-shell init manually (/etc/profile, profile files) because
 #   bash ignores --rcfile when started with -l.
-# - Pre-exec marker uses PS0 (bash 4.4+). On older bash (macOS default 3.2) we
-#   skip it — a fragile DEBUG-trap alternative would clobber the user's own
-#   traps and interact badly with debuggers.
+# - Pre-exec marker uses DEBUG only when the user does not already have a DEBUG
+#   trap. PS0 cannot reliably include the current command in bash.
 
 if [ -z "$__TERAX_HOOKS_LOADED" ]; then
   __TERAX_HOOKS_LOADED=1
@@ -36,7 +35,7 @@ if [ -z "$__TERAX_HOOKS_LOADED" ]; then
   }
 
   _terax_precmd() {
-    local _terax_ret=$?
+    local _terax_ret="${1:-$?}"
     printf '\e]133;D;%s\e\\' "$_terax_ret"
     printf '\e]7;file://%s%s\e\\' "${HOSTNAME:-$(uname -n 2>/dev/null)}" "$(_terax_urlencode "$PWD")"
     if [ -n "$TERAX_BLOCKS" ]; then
@@ -54,23 +53,35 @@ if [ -z "$__TERAX_HOOKS_LOADED" ]; then
     printf '\e]133;A\e\\'
   }
 
-  case ":${PROMPT_COMMAND:-}:" in
-    *":_terax_precmd:"*) ;;
-    *) PROMPT_COMMAND="_terax_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
-  esac
+  _terax_preexec() {
+    [ -n "$__TERAX_IN_PROMPT" ] && return
+    case "$BASH_COMMAND" in
+      :|_terax_prompt_command|_terax_precmd|_terax_preexec|__systemd_*) return ;;
+    esac
+    local cmd="$BASH_COMMAND"
+    cmd="${cmd//$'\e'/ }"
+    cmd="${cmd//$'\a'/ }"
+    cmd="${cmd//$'\r'/ }"
+    cmd="${cmd//$'\n'/ }"
+    [[ -n "$TERAX_BLOCKS" ]] && _terax_block_seen=1
+    printf '\e]133;C;%s\e\\' "${cmd:0:256}"
+  }
 
-  # Pre-exec marker via PS0 (bash 4.4+). PS0 is expanded just before a command
-  # runs — cleaner than a DEBUG trap, which would clobber user traps and fire
-  # on every command including inside PROMPT_COMMAND.
-  if [ "${BASH_VERSINFO[0]:-0}" -gt 4 ] \
-     || { [ "${BASH_VERSINFO[0]:-0}" -eq 4 ] && [ "${BASH_VERSINFO[1]:-0}" -ge 4 ]; }; then
-    if [ -n "$TERAX_BLOCKS" ]; then
-      # PS0 only expands, never executes: the arithmetic inside the array
-      # subscript sets the seen flag while the unset array expands to nothing.
-      PS0='\[\e]133;C\e\\\]${_terax_noop[$((_terax_block_seen=1))]}'"${PS0:-}"
-    else
-      PS0='\[\e]133;C\e\\\]'"${PS0:-}"
+  __TERAX_USER_PROMPT_COMMAND="${PROMPT_COMMAND:-}"
+  _terax_prompt_command() {
+    local _terax_ret=$?
+    __TERAX_IN_PROMPT=1
+    _terax_precmd "$_terax_ret"
+    if [ -n "$__TERAX_USER_PROMPT_COMMAND" ]; then
+      eval "$__TERAX_USER_PROMPT_COMMAND"
     fi
+    unset __TERAX_IN_PROMPT
+    return "$_terax_ret"
+  }
+  PROMPT_COMMAND="_terax_prompt_command"
+
+  if [ -z "$(trap -p DEBUG)" ]; then
+    trap _terax_preexec DEBUG
   fi
 
   _terax_precmd

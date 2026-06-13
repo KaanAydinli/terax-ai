@@ -33,9 +33,12 @@ export type TerminalTab = TabBase & {
   blocks?: boolean;
   /** AI agent cannot read buffer / context of this terminal. */
   private?: boolean;
-  /** User-set label that overrides the cwd-derived name. Survives cd. */
+  /** User-set label that overrides the default terminal/agent name. */
   customTitle?: string;
+  agent?: TerminalAgentKind;
 };
+
+export type TerminalAgentKind = "claude" | "codex" | "opencode";
 
 export type EditorTab = TabBase & {
   id: number;
@@ -126,8 +129,9 @@ export type TabPatch = Partial<{
   path: string;
   dirty: boolean;
   url: string;
-  /** Empty string resets a terminal tab to its cwd-derived name. */
+  /** Empty string resets a terminal tab to its default terminal/agent name. */
   customTitle: string;
+  agent: TerminalAgentKind | null;
 }>;
 
 function basename(path: string): string {
@@ -170,7 +174,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         kind: "terminal",
         spaceId: DEFAULT_SPACE_ID,
         cold: true,
-        title: initial?.title ?? "shell",
+        title: initial?.title ?? "Terminal",
         cwd: initial?.cwd,
         paneTree: { kind: "leaf", id: leafId, cwd: initial?.cwd },
         activeLeafId: leafId,
@@ -229,7 +233,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         kind: "terminal",
         spaceId,
         cold: true,
-        title: cwd ? basename(cwd) : "shell",
+        title: "Terminal",
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
@@ -316,7 +320,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         id: tabId,
         kind: "terminal",
         spaceId: activeSpaceIdRef.current,
-        title: "shell",
+        title: "Terminal",
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
@@ -335,7 +339,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         id: tabId,
         kind: "terminal",
         spaceId: activeSpaceIdRef.current,
-        title: "blocks",
+        title: "Blocks",
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
@@ -366,6 +370,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
+        agent: "claude",
       },
     ]);
     setActiveId(tabId);
@@ -381,7 +386,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         id: tabId,
         kind: "terminal",
         spaceId: activeSpaceIdRef.current,
-        title: "private",
+        title: "Private",
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
@@ -818,6 +823,9 @@ export function useTabs(initial?: Partial<TerminalTab>) {
               customTitle:
                 patch.customTitle === "" ? undefined : patch.customTitle,
             }),
+            ...(patch.agent !== undefined && {
+              agent: patch.agent ?? undefined,
+            }),
           };
         }
         if (x.kind === "preview") {
@@ -1012,7 +1020,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           id: tabId,
           kind: "terminal",
           spaceId: activeSpaceIdRef.current,
-          title: "shell",
+          title: "Terminal",
           cwd,
           paneTree: { kind: "leaf", id: leafId, cwd },
           activeLeafId: leafId,

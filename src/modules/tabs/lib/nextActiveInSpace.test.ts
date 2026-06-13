@@ -6,7 +6,7 @@ function term(id: number, spaceId: string): Tab {
     id,
     kind: "terminal",
     spaceId,
-    title: "shell",
+    title: "Terminal",
     paneTree: { kind: "leaf", id: id * 10 },
     activeLeafId: id * 10,
   } as Tab;

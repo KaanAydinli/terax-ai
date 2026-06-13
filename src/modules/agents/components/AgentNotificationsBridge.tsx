@@ -15,6 +15,7 @@ type Ctx = {
   activeId: number;
   focused: boolean;
   onActivate: Activate;
+  onTerminalAgentChange?: (leafId: number, agent: string | null) => void;
 };
 
 function tabInfo(
@@ -66,6 +67,7 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       const info = tabInfo(ctx.tabs, leafId);
       if (!info) return;
       store.start(leafId, info.tabId, sig.agent ?? "agent");
+      ctx.onTerminalAgentChange?.(leafId, sig.agent ?? "agent");
       return;
     }
     case "working":
@@ -86,6 +88,7 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
     }
     case "exited":
       store.finish(leafId);
+      ctx.onTerminalAgentChange?.(leafId, null);
       useManagedAgentsStore.getState().remove(leafId);
       return;
   }
@@ -95,14 +98,28 @@ export function AgentNotificationsBridge({
   tabs,
   activeId,
   onActivate,
+  onTerminalAgentChange,
 }: {
   tabs: Tab[];
   activeId: number;
   onActivate: Activate;
+  onTerminalAgentChange?: (leafId: number, agent: string | null) => void;
 }) {
   const focused = useWindowFocus();
-  const ctxRef = useRef<Ctx>({ tabs, activeId, focused, onActivate });
-  ctxRef.current = { tabs, activeId, focused, onActivate };
+  const ctxRef = useRef<Ctx>({
+    tabs,
+    activeId,
+    focused,
+    onActivate,
+    onTerminalAgentChange,
+  });
+  ctxRef.current = {
+    tabs,
+    activeId,
+    focused,
+    onActivate,
+    onTerminalAgentChange,
+  };
 
   useEffect(() => {
     let alive = true;

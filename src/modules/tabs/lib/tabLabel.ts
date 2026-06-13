@@ -1,10 +1,21 @@
-import type { Tab } from "./useTabs";
+import type { Tab, TerminalAgentKind } from "./useTabs";
+
+export function terminalAgentLabel(agent: TerminalAgentKind): string {
+  switch (agent) {
+    case "claude":
+      return "Claude Code";
+    case "codex":
+      return "Codex";
+    case "opencode":
+      return "opencode";
+  }
+}
 
 /**
  * The label shown on a tab. Non-terminal tabs use their stored title; terminal
- * tabs prefer a user-set custom name, then fall back to the last segment of the
- * cwd. Keeping this pure makes the "custom name survives a cd" invariant
- * testable without rendering the bar.
+ * tabs prefer a user-set custom name, then active coding-agent identity, then a
+ * stable terminal label. Keeping this pure makes the "custom name survives a cd"
+ * invariant testable without rendering the bar.
  */
 export function labelFor(t: Tab): string {
   if (t.kind === "editor") return t.title;
@@ -15,7 +26,8 @@ export function labelFor(t: Tab): string {
   if (t.kind === "git-history") return t.title;
   if (t.kind === "git-commit-file") return t.title;
   if (t.customTitle) return t.customTitle;
-  if (!t.cwd) return t.title;
-  const parts = t.cwd.split(/[\\/]/).filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : "/";
+  if (t.agent) return terminalAgentLabel(t.agent);
+  if (t.blocks) return "Blocks";
+  if (t.private) return "Private";
+  return "Terminal";
 }

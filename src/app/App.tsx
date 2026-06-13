@@ -77,7 +77,10 @@ import {
   useSpacePersistence,
   useSpacesBoot,
 } from "@/modules/spaces";
-import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
+import {
+  DEFAULT_SPACE_ID,
+  type TerminalAgentKind,
+} from "@/modules/tabs/lib/useTabs";
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore } from "@/modules/workspace";
@@ -94,6 +97,16 @@ import {
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { useTabCloseGuards } from "./hooks/useTabCloseGuards";
 import { useWorkspaceSwitcher } from "./hooks/useWorkspaceSwitcher";
+
+function normalizeTerminalAgent(
+  agent: string | null,
+): TerminalAgentKind | null {
+  const value = agent?.toLowerCase() ?? "";
+  if (value.includes("claude")) return "claude";
+  if (value.includes("codex") || value.includes("openai")) return "codex";
+  if (value.includes("opencode")) return "opencode";
+  return null;
+}
 
 export default function App() {
   const {
@@ -864,6 +877,19 @@ export default function App() {
     focusInput(null);
   }, [openPanel, focusInput]);
 
+  const handleTerminalAgentChange = useCallback(
+    (leafId: number, agent: string | null) => {
+      const normalized = normalizeTerminalAgent(agent);
+      const tab = tabsRef.current.find(
+        (candidate) =>
+          candidate.kind === "terminal" && hasLeaf(candidate.paneTree, leafId),
+      );
+      if (tab?.kind !== "terminal") return;
+      updateTab(tab.id, { agent: normalized });
+    },
+    [updateTab],
+  );
+
   const handleLeafExit = useCallback(
     (leafId: number, _code: number) => {
       const all = tabsRef.current;
@@ -1235,6 +1261,7 @@ export default function App() {
             tabs={tabs}
             activeId={activeId}
             onActivate={onActivateAgent}
+            onTerminalAgentChange={handleTerminalAgentChange}
           />
           <LocalhostLinkPreviewPopup
             hover={localhostLinkPopup}

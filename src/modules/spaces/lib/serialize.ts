@@ -149,9 +149,7 @@ function hydrateTab(
   switch (s.kind) {
     case "terminal": {
       const { tree, activeLeafId, firstLeafCwd } = hydrateTree(s.tree, allocId);
-      const title =
-        s.customTitle ??
-        (firstLeafCwd ? basename(firstLeafCwd) : s.blocks ? "blocks" : "shell");
+      const title = s.customTitle ?? (s.blocks ? "Blocks" : "Terminal");
       return {
         id: allocId(),
         kind: "terminal",
@@ -210,7 +208,7 @@ export function freshTerminalTab(
     kind: "terminal",
     spaceId,
     cold: true,
-    title: cwd ? basename(cwd) : "shell",
+    title: "Terminal",
     cwd: cwd ?? undefined,
     paneTree: { kind: "leaf", id: leafId, ...(cwd && { cwd }) },
     activeLeafId: leafId,

@@ -17,7 +17,7 @@ function term(over: Partial<Extract<Tab, { kind: "terminal" }>>): Tab {
     id: 1,
     kind: "terminal",
     spaceId: "s1",
-    title: "shell",
+    title: "Terminal",
     paneTree: { kind: "leaf", id: 2, cwd: "/a" },
     activeLeafId: 2,
     ...over,
