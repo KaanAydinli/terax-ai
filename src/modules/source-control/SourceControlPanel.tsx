@@ -54,20 +54,20 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  type KeyboardEvent,
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import type { SourceControlSummary } from "./useSourceControl";
 import {
-  useSourceControlPanel,
   type CheckState,
   type SourceControlFileEntry,
+  useSourceControlPanel,
 } from "./useSourceControlPanel";
 
 type Props = {
@@ -205,6 +205,13 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     !isDiverged &&
     !scm.actionBusy &&
     !sourceControl.busyAction;
+  const canPush =
+    hasUpstream &&
+    !!scm.status &&
+    scm.status.ahead > 0 &&
+    scm.status.behind === 0 &&
+    !scm.actionBusy &&
+    !sourceControl.busyAction;
   const canFetch = hasUpstream && !scm.actionBusy && !sourceControl.busyAction;
 
   const footerFeedback = useMemo(() => {
@@ -257,6 +264,10 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const handlePull = useCallback(() => {
     void sourceControl.runRemoteAction("pull");
   }, [sourceControl]);
+
+  const handlePush = useCallback(() => {
+    void scm.push();
+  }, [scm]);
 
   const rows = useMemo<RowDescriptor[]>(() => {
     const result: RowDescriptor[] = [];
@@ -413,6 +424,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
   const fetchBusy = sourceControl.busyAction === "fetch";
   const pullBusy = sourceControl.busyAction === "pull";
+  const pushBusy = sourceControl.busyAction === "push";
 
   return (
     <TooltipProvider delayDuration={800} skipDelayDuration={300}>
@@ -501,6 +513,34 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                 />
               )}
             </IconActionButton>
+            {scm.status && scm.status.ahead > 0 ? (
+              <IconActionButton
+                label={
+                  pushBusy
+                    ? "Pushing…"
+                    : isDiverged
+                      ? "Branch diverged — pull/rebase before pushing"
+                      : !hasUpstream
+                        ? "No upstream configured"
+                        : `Push ${scm.status.ahead} local ${
+                            scm.status.ahead === 1 ? "commit" : "commits"
+                          } to ${scm.status.upstream}`
+                }
+                disabled={!canPush}
+                onClick={handlePush}
+                side="bottom"
+              >
+                {pushBusy ? (
+                  <Spinner className="size-3" />
+                ) : (
+                  <HugeiconsIcon
+                    icon={ArrowUp01Icon}
+                    size={14}
+                    strokeWidth={1.9}
+                  />
+                )}
+              </IconActionButton>
+            ) : null}
             <IconActionButton
               label="Refresh source control"
               disabled={isRefreshing || !!scm.actionBusy}
