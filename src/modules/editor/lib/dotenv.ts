@@ -71,7 +71,7 @@ export const dotenv: StreamParser<DotenvState> = {
     if (state.quote) return tokenQuotedValue(stream, state);
 
     if (stream.eatSpace()) {
-      if (state.mode === "value" && state.valueStarted) {
+      if (state.mode === "value") {
         state.afterValueSpace = true;
       }
       return null;

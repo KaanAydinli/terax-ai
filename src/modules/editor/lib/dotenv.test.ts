@@ -65,4 +65,12 @@ describe("dotenv tokenizer", () => {
       ["#hash", "string"],
     ]);
   });
+
+  it("highlights comments after empty values", () => {
+    expect(tokenizeLine("KEY= #comment")).toEqual([
+      ["KEY", "variableName.definition"],
+      ["=", "operator"],
+      ["#comment", "comment"],
+    ]);
+  });
 });
