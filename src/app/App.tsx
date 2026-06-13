@@ -105,6 +105,7 @@ function normalizeTerminalAgent(
   if (value.includes("claude")) return "claude";
   if (value.includes("codex") || value.includes("openai")) return "codex";
   if (value.includes("opencode")) return "opencode";
+  if (value.includes("antigravity") || value === "agy") return "antigravity";
   return null;
 }
 

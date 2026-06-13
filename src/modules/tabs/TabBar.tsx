@@ -24,6 +24,7 @@ import {
   ClaudeIcon,
   GitCompareIcon,
   Globe02Icon,
+  GoogleGeminiIcon,
   IncognitoIcon,
   PencilEdit02Icon,
   PlusSignIcon,
@@ -416,7 +417,9 @@ export function TabIcon({ tab }: { tab: Tab }) {
         ? ClaudeIcon
         : tab.agent === "codex"
           ? ChatGptIcon
-          : Globe02Icon;
+          : tab.agent === "antigravity"
+            ? GoogleGeminiIcon
+            : Globe02Icon;
     return (
       <HugeiconsIcon
         icon={icon}

@@ -30,6 +30,7 @@ describe("labelFor (terminal tabs)", () => {
     expect(labelFor(terminalTab({ agent: "claude" }))).toBe("Claude Code");
     expect(labelFor(terminalTab({ agent: "codex" }))).toBe("Codex");
     expect(labelFor(terminalTab({ agent: "opencode" }))).toBe("opencode");
+    expect(labelFor(terminalTab({ agent: "antigravity" }))).toBe("Antigravity");
   });
 
   it("prefers a custom title over the default name", () => {

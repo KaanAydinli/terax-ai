@@ -38,7 +38,7 @@ export type TerminalTab = TabBase & {
   agent?: TerminalAgentKind;
 };
 
-export type TerminalAgentKind = "claude" | "codex" | "opencode";
+export type TerminalAgentKind = "claude" | "codex" | "opencode" | "antigravity";
 
 export type EditorTab = TabBase & {
   id: number;

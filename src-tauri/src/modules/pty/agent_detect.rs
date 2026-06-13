@@ -5,7 +5,7 @@ const ST_FINAL: u8 = b'\\';
 
 const OSC_MAX: usize = 2048;
 
-const DEFAULT_AGENTS: &[&str] = &["claude", "codex", "opencode"];
+const DEFAULT_AGENTS: &[&str] = &["claude", "codex", "opencode", "antigravity", "agy"];
 
 // OSC 777 marker our Claude Code hooks emit via `terminalSequence`.
 const TERAX_MARKER: &[u8] = b"notify;Terax;";
@@ -259,10 +259,17 @@ impl AgentDetector {
                 base.strip_prefix(a.as_str())
                     .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
             }) {
-                return Some(agent.clone());
+                return Some(normalize_agent_name(agent).to_string());
             }
         }
         None
+    }
+}
+
+fn normalize_agent_name(agent: &str) -> &str {
+    match agent {
+        "agy" => "antigravity",
+        _ => agent,
     }
 }
 
@@ -300,6 +307,11 @@ mod tests {
         assert_eq!(
             run(&mut d2, &osc("133;C;opencode")),
             vec![started("opencode")]
+        );
+        let mut d3 = AgentDetector::new();
+        assert_eq!(
+            run(&mut d3, &osc("133;C;agy")),
+            vec![started("antigravity")]
         );
     }
 

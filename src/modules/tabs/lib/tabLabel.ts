@@ -8,6 +8,8 @@ export function terminalAgentLabel(agent: TerminalAgentKind): string {
       return "Codex";
     case "opencode":
       return "opencode";
+    case "antigravity":
+      return "Antigravity";
   }
 }
 
