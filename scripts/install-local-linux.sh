@@ -33,5 +33,5 @@ if [[ -z "$deb_path" ]]; then
   exit 1
 fi
 
-sudo apt install -y "./$deb_path"
+sudo apt install --reinstall -y "./$deb_path"
 echo "Installed $deb_path"
