@@ -317,15 +317,6 @@ function createSlot(): Slot {
       return false;
     }
     if (isTerminalPaste(event)) {
-      if (event.type === "keydown") {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) slot.term.paste(text);
-          })
-          .catch(() => {});
-      }
-      event.preventDefault();
       return false;
     }
     return true;
@@ -421,7 +412,8 @@ function pickSlotFor(leafId: number): PickResult {
       best = s;
     }
   }
-  const chosen = best!;
+  if (!best) throw new Error("No terminal renderer slot available");
+  const chosen = best;
   return { slot: chosen, previousLeafId: chosen.currentLeafId };
 }
 
