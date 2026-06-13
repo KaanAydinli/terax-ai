@@ -32,7 +32,11 @@ import {
 } from "@/components/ui/tooltip";
 import { IS_MAC } from "@/lib/platform";
 import { cn } from "@/lib/utils";
-import { type GitBranchEntry, native } from "@/modules/ai/lib/native";
+import {
+  type GitBranchEntry,
+  type GitLogEntry,
+  native,
+} from "@/modules/ai/lib/native";
 import {
   copyToClipboard,
   revealInFinder,
@@ -43,6 +47,17 @@ import {
   COMPACT_ITEM,
 } from "@/modules/explorer/lib/menuItemClass";
 import { joinPath } from "@/modules/explorer/lib/useFileTree";
+import {
+  GraphRail,
+  MAX_VISIBLE_LANES,
+  railWidth,
+} from "@/modules/git-history/GraphRail";
+import {
+  EMPTY_GRAPH_STATE,
+  type GraphRow,
+  type GraphState,
+  layoutGraph,
+} from "@/modules/git-history/lib/graph";
 import {
   AiContentGenerator02Icon,
   Alert02Icon,
@@ -62,6 +77,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   type KeyboardEvent,
   memo,
+  type PointerEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -79,7 +95,6 @@ import {
 type Props = {
   open: boolean;
   sourceControl: SourceControlSummary;
-  onOpenGitGraph?: () => void;
   onOpenDiff: (input: {
     path: string;
     repoRoot: string;
@@ -98,6 +113,13 @@ const ROW_HEIGHTS = {
   header: 30,
   entry: 30,
 } as const;
+
+const GRAPH_PAGE_SIZE = 40;
+const GRAPH_ROW_HEIGHT = 30;
+const GRAPH_NEAR_BOTTOM_PX = 180;
+const MIN_GRAPH_HEIGHT = 140;
+const MAX_GRAPH_HEIGHT = 520;
+const GRAPH_RAIL_RESERVED_PX = railWidth(MAX_VISIBLE_LANES) + 2;
 
 type RowDescriptor =
   | { kind: "banner-diverged"; key: string }
@@ -161,7 +183,6 @@ function checkboxValue(state: CheckState): boolean | "indeterminate" {
 export const SourceControlPanel = memo(function SourceControlPanel({
   open,
   sourceControl,
-  onOpenGitGraph,
   onOpenDiff,
   onOpenFile,
 }: Props) {
@@ -176,6 +197,13 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const [branchLoading, setBranchLoading] = useState(false);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [switchingBranch, setSwitchingBranch] = useState<string | null>(null);
+  const [worktreeCollapsed, setWorktreeCollapsed] = useState(false);
+  const [graphCollapsed, setGraphCollapsed] = useState(false);
+  const [graphHeight, setGraphHeight] = useState(260);
+  const graphResizeRef = useRef<{
+    startY: number;
+    startHeight: number;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -218,6 +246,15 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const hasUpstream = !!scm.status?.upstream;
   const isDiverged =
     !!scm.status && scm.status.ahead > 0 && scm.status.behind > 0;
+  const graphRefreshKey =
+    scm.status && scm.actionBusy === null
+      ? [
+          scm.status.branch,
+          scm.status.ahead,
+          scm.status.behind,
+          scm.status.changedFiles.length,
+        ].join(":")
+      : null;
 
   const canPull =
     hasUpstream &&
@@ -279,6 +316,37 @@ export const SourceControlPanel = memo(function SourceControlPanel({
       }, 450);
     });
   }, [scm]);
+
+  const beginGraphResize = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (worktreeCollapsed || graphCollapsed) return;
+      event.preventDefault();
+      graphResizeRef.current = {
+        startY: event.clientY,
+        startHeight: graphHeight,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [graphCollapsed, graphHeight, worktreeCollapsed],
+  );
+
+  const updateGraphResize = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const resize = graphResizeRef.current;
+      if (!resize) return;
+      const next = resize.startHeight - (event.clientY - resize.startY);
+      setGraphHeight(
+        Math.min(MAX_GRAPH_HEIGHT, Math.max(MIN_GRAPH_HEIGHT, next)),
+      );
+    },
+    [],
+  );
+
+  const endGraphResize = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (!graphResizeRef.current) return;
+    graphResizeRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   const handleFetch = useCallback(() => {
     void sourceControl.runRemoteAction("fetch");
@@ -710,28 +778,6 @@ export const SourceControlPanel = memo(function SourceControlPanel({
           </div>
         </header>
 
-        {onOpenGitGraph ? (
-          <button
-            type="button"
-            onClick={() => onOpenGitGraph()}
-            className="group flex shrink-0 cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-2 text-left text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-          >
-            <HugeiconsIcon
-              icon={GitBranchIcon}
-              size={13}
-              strokeWidth={1.85}
-              className="shrink-0"
-            />
-            <span className="flex-1 text-[12px] font-medium">Commit Graph</span>
-            <HugeiconsIcon
-              icon={ArrowRight01Icon}
-              size={12}
-              strokeWidth={2}
-              className="shrink-0 opacity-50 transition-transform group-hover:translate-x-0.5"
-            />
-          </button>
-        ) : null}
-
         {scm.panelState === "loading" ? (
           <PanelCenter title="Loading repository" />
         ) : null}
@@ -756,206 +802,253 @@ export const SourceControlPanel = memo(function SourceControlPanel({
         ) : null}
 
         {scm.panelState === "ready" && scm.status ? (
-          <>
-            <div className="relative shrink-0 space-y-2 border-b border-border/40 bg-gradient-to-b from-card/65 to-card/30 px-2.5 pb-2.5 pt-2.5">
-              <div
-                className={cn(
-                  "relative rounded-lg border bg-background/95 shadow-sm transition-colors",
-                  scm.commitMessage.length > 0
-                    ? "border-border/70"
-                    : "border-border/45",
-                  "focus-within:border-primary/45 focus-within:shadow-md focus-within:shadow-primary/5",
-                )}
-              >
-                <Textarea
-                  value={scm.commitMessage}
-                  onChange={(event) => scm.setCommitMessage(event.target.value)}
-                  onKeyDown={handleCommitShortcut}
-                  placeholder="Commit message"
-                  rows={3}
-                  className={cn(
-                    "min-h-[72px] border-border resize-none rounded-lg bg-transparent px-3 pb-7 pt-2.5 text-[12.5px] leading-snug shadow-none placeholder:text-muted-foreground/65 focus-visible:ring-0 focus:border-0",
-                  )}
-                />
-                <div className="pointer-events-none absolute inset-x-3 bottom-1.5 flex items-center justify-between p-1 gap-2 text-[10px] tabular-nums text-muted-foreground/55">
-                  {scm.commitMessage.length > 0 ? (
-                    <span>Ch: {scm.commitMessage.length}</span>
-                  ) : (
-                    <span className="flex gap-2 items-center">
-                      {commitShortcut} <p>to commit</p>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SectionToggleHeader
+              title="Changes"
+              count={changedCount}
+              collapsed={worktreeCollapsed}
+              onToggle={() => setWorktreeCollapsed((v) => !v)}
+            />
+            {!worktreeCollapsed ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="relative shrink-0 space-y-2 border-b border-border/40 bg-gradient-to-b from-card/65 to-card/30 px-2.5 pb-2.5 pt-2.5">
+                  <div
+                    className={cn(
+                      "relative rounded-lg border bg-background/95 shadow-sm transition-colors",
+                      scm.commitMessage.length > 0
+                        ? "border-border/70"
+                        : "border-border/45",
+                      "focus-within:border-primary/45 focus-within:shadow-md focus-within:shadow-primary/5",
+                    )}
+                  >
+                    <Textarea
+                      value={scm.commitMessage}
+                      onChange={(event) =>
+                        scm.setCommitMessage(event.target.value)
+                      }
+                      onKeyDown={handleCommitShortcut}
+                      placeholder="Commit message"
+                      rows={3}
+                      className={cn(
+                        "min-h-[72px] border-border resize-none rounded-lg bg-transparent px-3 pb-7 pt-2.5 text-[12.5px] leading-snug shadow-none placeholder:text-muted-foreground/65 focus-visible:ring-0 focus:border-0",
+                      )}
+                    />
+                    <div className="pointer-events-none absolute inset-x-3 bottom-1.5 flex items-center justify-between gap-2 p-1 text-[10px] tabular-nums text-muted-foreground/55">
+                      {scm.commitMessage.length > 0 ? (
+                        <span>Ch: {scm.commitMessage.length}</span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          {commitShortcut} <p>to commit</p>
+                        </span>
+                      )}
+                    </div>
+                    <div className="absolute right-1 top-1">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`${scm.generateCommitMessageHint} (${generateShortcut})`}
+                            disabled={!scm.canGenerateCommitMessage}
+                            onClick={() => void scm.generateCommitMessage()}
+                            className={cn(
+                              "inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors",
+                              "hover:bg-foreground/[0.06] hover:text-foreground",
+                              "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/65",
+                            )}
+                          >
+                            {scm.actionBusy === "generate-message" ? (
+                              <Spinner className="size-3" />
+                            ) : (
+                              <HugeiconsIcon
+                                icon={AiContentGenerator02Icon}
+                                size={14}
+                                strokeWidth={1.75}
+                              />
+                            )}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="left"
+                          className={cn(
+                            SOURCE_CONTROL_TOOLTIP_CLASS,
+                            "text-[10.5px]",
+                          )}
+                        >
+                          {`${scm.generateCommitMessageHint} (${generateShortcut})`}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  <div className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-muted-foreground">
+                    <span
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full transition-colors",
+                        canCommit
+                          ? "bg-foreground/80"
+                          : stagedCount > 0
+                            ? "bg-muted-foreground/60"
+                            : "bg-muted-foreground/30",
+                      )}
+                    />
+                    <span className="truncate font-medium text-foreground/85">
+                      {stagedCount === 0
+                        ? "Nothing staged"
+                        : `${stagedCount} ${stagedCount === 1 ? "file" : "files"} staged`}
                     </span>
-                  )}
-                </div>
-                <div className="absolute right-1 top-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label={`${scm.generateCommitMessageHint} (${generateShortcut})`}
-                        disabled={!scm.canGenerateCommitMessage}
-                        onClick={() => void scm.generateCommitMessage()}
+                    <span className="ml-auto shrink-0 truncate text-muted-foreground/65">
+                      {pushStatusLabel}
+                    </span>
+                  </div>
+
+                  <div className="grid w-full grid-cols-2 gap-1.5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="xs"
+                          className="h-7 cursor-pointer text-[11.5px] font-semibold tracking-tight shadow-sm disabled:cursor-not-allowed disabled:shadow-none"
+                          disabled={!canCommit}
+                          onClick={() => void scm.commit()}
+                        >
+                          {scm.actionBusy === "commit"
+                            ? "Committing..."
+                            : "Commit"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
                         className={cn(
-                          "inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors",
-                          "hover:bg-foreground/[0.06] hover:text-foreground",
-                          "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/65",
+                          SOURCE_CONTROL_TOOLTIP_CLASS,
+                          "text-[10.5px]",
                         )}
                       >
-                        {scm.actionBusy === "generate-message" ? (
-                          <Spinner className="size-3" />
-                        ) : (
-                          <HugeiconsIcon
-                            icon={AiContentGenerator02Icon}
-                            size={14}
-                            strokeWidth={1.75}
-                          />
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="left"
-                      className={cn(
-                        SOURCE_CONTROL_TOOLTIP_CLASS,
-                        "text-[10.5px]",
-                      )}
-                    >
-                      {`${scm.generateCommitMessageHint} (${generateShortcut})`}
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-
-              <div className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-muted-foreground">
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full transition-colors",
-                    canCommit
-                      ? "bg-foreground/80"
-                      : stagedCount > 0
-                        ? "bg-muted-foreground/60"
-                        : "bg-muted-foreground/30",
-                  )}
-                />
-                <span className="truncate font-medium text-foreground/85">
-                  {stagedCount === 0
-                    ? "Nothing staged"
-                    : `${stagedCount} ${stagedCount === 1 ? "file" : "files"} staged`}
-                </span>
-                <span className="ml-auto shrink-0 truncate text-muted-foreground/65">
-                  {pushStatusLabel}
-                </span>
-              </div>
-
-              <div className="grid w-full grid-cols-2 gap-1.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="xs"
-                      className="h-7 cursor-pointer text-[11.5px] font-semibold tracking-tight shadow-sm disabled:cursor-not-allowed disabled:shadow-none"
-                      disabled={!canCommit}
-                      onClick={() => void scm.commit()}
-                    >
-                      {scm.actionBusy === "commit" ? "Committing…" : "Commit"}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="bottom"
-                    className={cn(
-                      SOURCE_CONTROL_TOOLTIP_CLASS,
-                      "text-[10.5px]",
-                    )}
-                  >
-                    {commitHint}
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      className="h-7 cursor-pointer text-[11.5px] font-medium disabled:cursor-not-allowed"
-                      disabled={!scm.canPush || !!scm.actionBusy}
-                      onClick={() => void scm.push()}
-                    >
-                      {scm.actionBusy === "push" ? "Pushing…" : "Push"}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="bottom"
-                    className={cn(
-                      SOURCE_CONTROL_TOOLTIP_CLASS,
-                      "max-w-64 text-[10.5px]",
-                    )}
-                  >
-                    {pushDisabledReason}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-
-              <CommitFeedback feedback={footerFeedback} />
-            </div>
-
-            {scm.allClean ? (
-              <CleanTreeHint repoLabel={repoLabel} />
-            ) : (
-              <div
-                ref={containerRef}
-                tabIndex={0}
-                role="listbox"
-                aria-label="Changed files"
-                aria-activedescendant={
-                  focusedRowKey ? `scm-row-${focusedRowKey}` : undefined
-                }
-                onKeyDown={handlePanelKeyDown}
-                className="relative min-h-0 flex-1 outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
-              >
-                <div
-                  ref={scrollRef}
-                  className="h-full overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]"
-                >
-                  <div
-                    style={{
-                      height: virtualizer.getTotalSize(),
-                      position: "relative",
-                      width: "100%",
-                    }}
-                  >
-                    {virtualizer.getVirtualItems().map((virtualRow) => {
-                      const row = rows[virtualRow.index];
-                      if (!row) return null;
-                      return (
-                        <div
-                          key={virtualRow.key}
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: "100%",
-                            height: virtualRow.size,
-                            transform: `translateY(${virtualRow.start}px)`,
-                          }}
+                        {commitHint}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          className="h-7 cursor-pointer text-[11.5px] font-medium disabled:cursor-not-allowed"
+                          disabled={!scm.canPush || !!scm.actionBusy}
+                          onClick={() => void scm.push()}
                         >
-                          <RowRenderer
-                            row={row}
-                            focused={focusedRowKey === row.key}
-                            selectedPath={scm.selected?.path ?? null}
-                            actionBusy={scm.actionBusy}
-                            headerCheckState={scm.headerCheckState}
-                            repoRoot={scm.repo?.repoRoot ?? null}
-                            onFocusRow={setFocusedRowKey}
-                            onToggleAll={scm.toggleAll}
-                            onSelectFile={scm.selectFile}
-                            onToggleStageFile={scm.toggleStageFile}
-                            onDiscardFile={scm.requestDiscardFile}
-                            onOpenFile={onOpenFile}
-                          />
-                        </div>
-                      );
-                    })}
+                          {scm.actionBusy === "push" ? "Pushing..." : "Push"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        className={cn(
+                          SOURCE_CONTROL_TOOLTIP_CLASS,
+                          "max-w-64 text-[10.5px]",
+                        )}
+                      >
+                        {pushDisabledReason}
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
+
+                  <CommitFeedback feedback={footerFeedback} />
                 </div>
+
+                {scm.allClean ? (
+                  <CleanTreeHint repoLabel={repoLabel} />
+                ) : (
+                  <div
+                    ref={containerRef}
+                    tabIndex={0}
+                    role="listbox"
+                    aria-label="Changed files"
+                    aria-activedescendant={
+                      focusedRowKey ? `scm-row-${focusedRowKey}` : undefined
+                    }
+                    onKeyDown={handlePanelKeyDown}
+                    className="relative min-h-0 flex-1 outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
+                  >
+                    <div
+                      ref={scrollRef}
+                      className="h-full overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]"
+                    >
+                      <div
+                        style={{
+                          height: virtualizer.getTotalSize(),
+                          position: "relative",
+                          width: "100%",
+                        }}
+                      >
+                        {virtualizer.getVirtualItems().map((virtualRow) => {
+                          const row = rows[virtualRow.index];
+                          if (!row) return null;
+                          return (
+                            <div
+                              key={virtualRow.key}
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                width: "100%",
+                                height: virtualRow.size,
+                                transform: `translateY(${virtualRow.start}px)`,
+                              }}
+                            >
+                              <RowRenderer
+                                row={row}
+                                focused={focusedRowKey === row.key}
+                                selectedPath={scm.selected?.path ?? null}
+                                actionBusy={scm.actionBusy}
+                                headerCheckState={scm.headerCheckState}
+                                repoRoot={scm.repo?.repoRoot ?? null}
+                                onFocusRow={setFocusedRowKey}
+                                onToggleAll={scm.toggleAll}
+                                onSelectFile={scm.selectFile}
+                                onToggleStageFile={scm.toggleStageFile}
+                                onDiscardFile={scm.requestDiscardFile}
+                                onOpenFile={onOpenFile}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </>
+            ) : null}
+
+            {!worktreeCollapsed && !graphCollapsed ? (
+              <div
+                title="Resize commit graph"
+                onPointerDown={beginGraphResize}
+                onPointerMove={updateGraphResize}
+                onPointerUp={endGraphResize}
+                onPointerCancel={endGraphResize}
+                className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-y border-border/35 bg-card/65"
+              >
+                <span className="h-px w-8 rounded-full bg-border transition-colors group-hover:bg-primary/55" />
+              </div>
+            ) : null}
+
+            <SectionToggleHeader
+              title="Commit Graph"
+              collapsed={graphCollapsed}
+              onToggle={() => setGraphCollapsed((v) => !v)}
+            />
+            {!graphCollapsed ? (
+              <div
+                className={cn(
+                  "min-h-0 border-t border-border/30",
+                  worktreeCollapsed ? "flex-1" : "shrink-0",
+                )}
+                style={worktreeCollapsed ? undefined : { height: graphHeight }}
+              >
+                <InlineCommitGraph
+                  repoRoot={scm.status.repoRoot}
+                  refreshKey={graphRefreshKey}
+                />
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </aside>
 
@@ -987,6 +1080,356 @@ export const SourceControlPanel = memo(function SourceControlPanel({
         </AlertDialogContent>
       </AlertDialog>
     </TooltipProvider>
+  );
+});
+
+function SectionToggleHeader({
+  title,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  title: string;
+  count?: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex h-8 shrink-0 cursor-pointer items-center gap-2 border-b border-border/45 bg-card/70 px-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+    >
+      <HugeiconsIcon
+        icon={collapsed ? ArrowRight01Icon : ArrowDown01Icon}
+        size={12}
+        strokeWidth={2}
+        className="shrink-0"
+      />
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      {typeof count === "number" ? (
+        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-border/60 px-1 text-[9.5px] font-semibold tabular-nums text-muted-foreground">
+          {count}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+type InlineCommitGraphProps = {
+  repoRoot: string;
+  refreshKey: string | null;
+};
+
+function compactGraphDate(secs: number): string {
+  if (!secs) return "";
+  const date = new Date(secs * 1000);
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "2-digit",
+  });
+}
+
+const InlineCommitGraph = memo(function InlineCommitGraph({
+  repoRoot,
+  refreshKey,
+}: InlineCommitGraphProps) {
+  const [commits, setCommits] = useState<GitLogEntry[]>([]);
+  const [loadStatus, setLoadStatus] = useState<
+    "idle" | "initial" | "more" | "error"
+  >("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [endReached, setEndReached] = useState(false);
+  const requestIdRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const graphCacheRef = useRef<{
+    rows: GraphRow[];
+    byCommit: Map<string, GraphRow>;
+    tail: GraphState;
+    firstSha: string | null;
+    len: number;
+    maxLaneCount: number;
+  }>({
+    rows: [],
+    byCommit: new Map(),
+    tail: EMPTY_GRAPH_STATE,
+    firstSha: null,
+    len: 0,
+    maxLaneCount: 1,
+  });
+
+  const { graphByCommit, maxLaneCount } = useMemo(() => {
+    const cache = graphCacheRef.current;
+    if (commits.length === 0) {
+      cache.rows = [];
+      cache.byCommit = new Map();
+      cache.tail = EMPTY_GRAPH_STATE;
+      cache.firstSha = null;
+      cache.len = 0;
+      cache.maxLaneCount = 1;
+      return { graphByCommit: cache.byCommit, maxLaneCount: 1 };
+    }
+
+    const firstSha = commits[0].sha;
+    const canAppend =
+      cache.firstSha === firstSha && commits.length >= cache.len;
+    if (!canAppend) {
+      const { rows, state } = layoutGraph(commits);
+      const byCommit = new Map<string, GraphRow>();
+      let max = 1;
+      for (const row of rows) {
+        byCommit.set(row.sha, row);
+        if (row.laneCount > max) max = row.laneCount;
+      }
+      cache.rows = rows;
+      cache.byCommit = byCommit;
+      cache.tail = state;
+      cache.firstSha = firstSha;
+      cache.len = commits.length;
+      cache.maxLaneCount = max;
+      return { graphByCommit: byCommit, maxLaneCount: max };
+    }
+
+    if (commits.length > cache.len) {
+      const delta = commits.slice(cache.len);
+      const { rows, state } = layoutGraph(delta, cache.tail);
+      let max = cache.maxLaneCount;
+      for (const row of rows) {
+        cache.byCommit.set(row.sha, row);
+        if (row.laneCount > max) max = row.laneCount;
+      }
+      cache.rows = cache.rows.concat(rows);
+      cache.tail = state;
+      cache.len = commits.length;
+      cache.maxLaneCount = max;
+    }
+
+    return { graphByCommit: cache.byCommit, maxLaneCount: cache.maxLaneCount };
+  }, [commits]);
+
+  const virtualizer = useVirtualizer({
+    count: commits.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => GRAPH_ROW_HEIGHT,
+    overscan: 8,
+    getItemKey: (index) => commits[index]?.sha ?? index,
+  });
+
+  const loadInitial = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    setLoadStatus("initial");
+    setError(null);
+    setEndReached(false);
+    try {
+      const entries = await native.gitLog(repoRoot, { limit: GRAPH_PAGE_SIZE });
+      if (requestId !== requestIdRef.current) return;
+      setCommits(entries);
+      setLoadStatus("idle");
+      if (entries.length < GRAPH_PAGE_SIZE) setEndReached(true);
+    } catch (err) {
+      if (requestId !== requestIdRef.current) return;
+      setError(normalizeError(err));
+      setLoadStatus("error");
+    }
+  }, [repoRoot]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || endReached || loadStatus !== "idle") return;
+    const last = commits[commits.length - 1];
+    if (!last) return;
+    loadingMoreRef.current = true;
+    setLoadStatus("more");
+    setError(null);
+    try {
+      const entries = await native.gitLog(repoRoot, {
+        limit: GRAPH_PAGE_SIZE,
+        beforeSha: last.sha,
+      });
+      setCommits((prev) => {
+        const seen = new Set(prev.map((commit) => commit.sha));
+        return [...prev, ...entries.filter((commit) => !seen.has(commit.sha))];
+      });
+      if (entries.length < GRAPH_PAGE_SIZE) setEndReached(true);
+      setLoadStatus("idle");
+    } catch (err) {
+      setError(normalizeError(err));
+      setLoadStatus("error");
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [commits, endReached, loadStatus, repoRoot]);
+
+  useEffect(() => {
+    void refreshKey;
+    setCommits([]);
+    void loadInitial();
+  }, [loadInitial, refreshKey]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (remaining < GRAPH_NEAR_BOTTOM_PX) {
+      void loadMore();
+    }
+  }, [loadMore]);
+
+  if (loadStatus === "initial" && commits.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 text-[11.5px] text-muted-foreground">
+        <Spinner className="size-3" />
+        Loading commits...
+      </div>
+    );
+  }
+
+  if (loadStatus === "error" && commits.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+        <div className="text-[12px] font-medium">Could not load commits</div>
+        <div className="max-w-56 text-[10.5px] leading-relaxed text-muted-foreground">
+          {error ?? "Unknown Git error"}
+        </div>
+        <Button
+          size="xs"
+          variant="secondary"
+          onClick={() => void loadInitial()}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (commits.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center px-4 text-center text-[11.5px] text-muted-foreground">
+        No commits yet.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="h-full overflow-y-auto overflow-x-hidden bg-background/60 [scrollbar-gutter:stable]"
+    >
+      <div
+        style={{
+          height: virtualizer.getTotalSize(),
+          position: "relative",
+          width: "100%",
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const commit = commits[virtualRow.index];
+          if (!commit) return null;
+          return (
+            <div
+              key={virtualRow.key}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: virtualRow.size,
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <InlineCommitRow
+                commit={commit}
+                graphRow={graphByCommit.get(commit.sha) ?? null}
+                maxLaneCount={maxLaneCount}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {loadStatus === "more" ? (
+        <div className="flex items-center justify-center gap-2 py-2 text-[10.5px] text-muted-foreground">
+          <Spinner className="size-3" />
+          Loading more...
+        </div>
+      ) : null}
+      {loadStatus === "error" && commits.length > 0 ? (
+        <div className="flex items-center justify-center gap-2 py-2 text-[10.5px] text-destructive">
+          {error ?? "Failed to load more"}
+          <Button
+            size="xs"
+            variant="ghost"
+            className="h-6 cursor-pointer text-[10.5px]"
+            onClick={() => void loadMore()}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      {endReached ? (
+        <div className="py-2 text-center text-[10px] text-muted-foreground/60">
+          End of history
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+type InlineCommitRowProps = {
+  commit: GitLogEntry;
+  graphRow: GraphRow | null;
+  maxLaneCount: number;
+};
+
+const InlineCommitRow = memo(function InlineCommitRow({
+  commit,
+  graphRow,
+  maxLaneCount,
+}: InlineCommitRowProps) {
+  const total = commit.insertions + commit.deletions;
+
+  return (
+    <div className="grid h-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b border-border/25 pr-2 text-left transition-colors hover:bg-accent/25">
+      <div
+        className="flex justify-start pl-1"
+        style={{ width: GRAPH_RAIL_RESERVED_PX }}
+      >
+        {graphRow ? (
+          <GraphRail
+            row={graphRow}
+            rowHeight={GRAPH_ROW_HEIGHT}
+            maxLaneCount={maxLaneCount}
+          />
+        ) : null}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-[11.5px] font-medium leading-tight text-foreground">
+          {commit.subject || (
+            <span className="text-muted-foreground">(no subject)</span>
+          )}
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9.5px] leading-none text-muted-foreground">
+          <span className="font-mono tabular-nums">{commit.shortSha}</span>
+          <span className="size-[3px] rounded-full bg-muted-foreground/35" />
+          <span className="truncate">{commit.author || "Unknown"}</span>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-0.5 text-[9.5px] leading-none text-muted-foreground">
+        <span className="font-mono tabular-nums">
+          {compactGraphDate(commit.timestampSecs)}
+        </span>
+        {total > 0 ? (
+          <span className="font-mono tabular-nums">
+            <span className="text-emerald-500">+{commit.insertions}</span>
+            <span className="ml-1 text-rose-500">-{commit.deletions}</span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground/45">
+            {commit.filesChanged} files
+          </span>
+        )}
+      </div>
+    </div>
   );
 });
 
