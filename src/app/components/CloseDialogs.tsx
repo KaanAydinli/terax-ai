@@ -9,6 +9,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { Tab } from "@/modules/tabs";
+import type { PendingBatchClose } from "../hooks/useTabCloseGuards";
 
 type Props = {
   tabs: Tab[];
@@ -18,6 +19,9 @@ type Props = {
   pendingTerminalCloseTab: number | null;
   onCancelTerminalClose: () => void;
   onConfirmTerminalClose: () => void;
+  pendingBatchClose: PendingBatchClose;
+  onCancelBatchClose: () => void;
+  onConfirmBatchClose: () => void;
   pendingDeleteTabs: number[] | null;
   onCancelDeleteClose: () => void;
   onConfirmDeleteClose: () => void;
@@ -32,6 +36,9 @@ export function CloseDialogs({
   pendingTerminalCloseTab,
   onCancelTerminalClose,
   onConfirmTerminalClose,
+  pendingBatchClose,
+  onCancelBatchClose,
+  onConfirmBatchClose,
   pendingDeleteTabs,
   onCancelDeleteClose,
   onConfirmDeleteClose,
@@ -80,6 +87,31 @@ export function CloseDialogs({
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction onClick={onConfirmTerminalClose}>
+              Close Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingBatchClose !== null}
+        onOpenChange={(open) => !open && onCancelBatchClose()}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingBatchClose?.title ?? "Close Tabs?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingBatchClose?.description ??
+                "Some tabs have unsaved changes or running processes. Close anyway?"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={onCancelBatchClose}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={onConfirmBatchClose}>
               Close Anyway
             </AlertDialogAction>
           </AlertDialogFooter>

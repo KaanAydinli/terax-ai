@@ -317,11 +317,15 @@ export default function App() {
     pendingCloseTab,
     pendingTerminalCloseTab,
     pendingDeleteTabs,
+    pendingBatchClose,
     handleClose,
+    handleCloseMany,
     confirmClose,
     cancelClose,
     confirmTerminalClose,
     cancelTerminalClose,
+    confirmBatchClose,
+    cancelBatchClose,
     confirmDeleteClose,
     cancelDeleteClose,
     handlePathDeleted,
@@ -549,6 +553,8 @@ export default function App() {
   const explorerGitDecorations = usePreferencesStore(
     (s) => s.explorerGitDecorations,
   );
+  const showTopBar = usePreferencesStore((s) => s.showTopBar);
+  const showBottomBar = usePreferencesStore((s) => s.showBottomBar);
 
   const openPreviewTab = useCallback(
     (url: string) => {
@@ -647,6 +653,30 @@ export default function App() {
     }
     void handleClose(activeId);
   }, [activeId, closeActivePane, handleClose]);
+
+  const handleCloseAllTabs = useCallback(() => {
+    void handleCloseMany(
+      tabsRef.current.map((tab) => tab.id),
+      {
+        title: "Close All Tabs?",
+        description:
+          "Some tabs have unsaved changes or running processes. Close all anyway?",
+      },
+    );
+  }, [handleCloseMany]);
+
+  const handleCloseAllEditors = useCallback(() => {
+    void handleCloseMany(
+      tabsRef.current
+        .filter((tab) => tab.kind === "editor")
+        .map((tab) => tab.id),
+      {
+        title: "Close All Editors?",
+        description:
+          "Some editor tabs have unsaved changes. Close all editors anyway?",
+      },
+    );
+  }, [handleCloseMany]);
 
   const [zenMode, setZenMode] = useState(false);
 
@@ -1067,7 +1097,7 @@ export default function App() {
     <ThemeProvider>
       <TooltipProvider>
         <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
-          {!zenMode && (
+          {!zenMode && showTopBar && (
             <Header
               tabs={spaceTabs}
               activeId={activeId}
@@ -1077,6 +1107,8 @@ export default function App() {
               onNewPreview={() => openPreviewTab("")}
               onNewEditor={() => setNewEditorOpen(true)}
               onClose={handleClose}
+              onCloseAllTabs={handleCloseAllTabs}
+              onCloseAllEditors={handleCloseAllEditors}
               onPin={pinTab}
               onRename={handleRenameTab}
               onToggleSidebar={toggleSidebar}
@@ -1184,7 +1216,7 @@ export default function App() {
             </ResizablePanelGroup>
           </main>
 
-          {!zenMode && (
+          {!zenMode && showBottomBar && (
             <StatusBar
               cwd={activeCwd}
               filePath={activeFilePath}
@@ -1266,6 +1298,9 @@ export default function App() {
             pendingTerminalCloseTab={pendingTerminalCloseTab}
             onCancelTerminalClose={cancelTerminalClose}
             onConfirmTerminalClose={confirmTerminalClose}
+            pendingBatchClose={pendingBatchClose}
+            onCancelBatchClose={cancelBatchClose}
+            onConfirmBatchClose={confirmBatchClose}
             pendingDeleteTabs={pendingDeleteTabs}
             onCancelDeleteClose={cancelDeleteClose}
             onConfirmDeleteClose={confirmDeleteClose}

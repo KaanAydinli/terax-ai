@@ -1,11 +1,17 @@
-import { useCallback, useState } from "react";
-import { leafHasForegroundProcess, leafIds } from "@/modules/terminal";
 import type { Tab } from "@/modules/tabs";
+import { leafHasForegroundProcess, leafIds } from "@/modules/terminal";
+import { useCallback, useState } from "react";
 
 type Params = {
   tabs: Tab[];
   disposeTab: (id: number) => void;
 };
+
+export type PendingBatchClose = {
+  ids: number[];
+  title: string;
+  description: string;
+} | null;
 
 /**
  * Guards tab closing: dirty editors and terminals with a live foreground
@@ -20,6 +26,8 @@ export function useTabCloseGuards({ tabs, disposeTab }: Params) {
   const [pendingDeleteTabs, setPendingDeleteTabs] = useState<number[] | null>(
     null,
   );
+  const [pendingBatchClose, setPendingBatchClose] =
+    useState<PendingBatchClose>(null);
 
   const handleClose = useCallback(
     async (id: number) => {
@@ -61,6 +69,53 @@ export function useTabCloseGuards({ tabs, disposeTab }: Params) {
     setPendingTerminalCloseTab(null);
   }, []);
 
+  const handleCloseMany = useCallback(
+    async (
+      ids: number[],
+      label: { title: string; description: string },
+    ): Promise<void> => {
+      const requested = new Set(ids);
+      const selected = tabs.filter((tab) => requested.has(tab.id));
+      if (selected.length === 0) return;
+
+      const hasDirtyEditor = selected.some(
+        (tab) => tab.kind === "editor" && tab.dirty,
+      );
+      const terminalTabs = selected.filter((tab) => tab.kind === "terminal");
+      const terminalChecks = await Promise.all(
+        terminalTabs.flatMap((tab) =>
+          tab.kind === "terminal"
+            ? leafIds(tab.paneTree).map(leafHasForegroundProcess)
+            : [],
+        ),
+      );
+      const hasRunningTerminal = terminalChecks.some(Boolean);
+
+      if (hasDirtyEditor || hasRunningTerminal) {
+        setPendingBatchClose({
+          ids: selected.map((tab) => tab.id),
+          title: label.title,
+          description: label.description,
+        });
+        return;
+      }
+
+      for (const tab of selected) disposeTab(tab.id);
+    },
+    [tabs, disposeTab],
+  );
+
+  const confirmBatchClose = useCallback(() => {
+    if (pendingBatchClose !== null) {
+      for (const id of pendingBatchClose.ids) disposeTab(id);
+      setPendingBatchClose(null);
+    }
+  }, [pendingBatchClose, disposeTab]);
+
+  const cancelBatchClose = useCallback(() => {
+    setPendingBatchClose(null);
+  }, []);
+
   const confirmDeleteClose = useCallback(() => {
     if (pendingDeleteTabs !== null) {
       for (const id of pendingDeleteTabs) disposeTab(id);
@@ -93,11 +148,15 @@ export function useTabCloseGuards({ tabs, disposeTab }: Params) {
     pendingCloseTab,
     pendingTerminalCloseTab,
     pendingDeleteTabs,
+    pendingBatchClose,
     handleClose,
+    handleCloseMany,
     confirmClose,
     cancelClose,
     confirmTerminalClose,
     cancelTerminalClose,
+    confirmBatchClose,
+    cancelBatchClose,
     confirmDeleteClose,
     cancelDeleteClose,
     handlePathDeleted,

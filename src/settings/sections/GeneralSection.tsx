@@ -1,3 +1,4 @@
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -5,7 +6,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -18,8 +18,6 @@ import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { ThemePref } from "@/modules/settings/store";
 import {
-  TERMINAL_FONT_SIZES,
-  TERMINAL_SCROLLBACK_PRESETS,
   setAgentNotifications,
   setAlwaysOpenLocalhostLinksInPreview,
   setAutostart,
@@ -27,15 +25,19 @@ import {
   setEditorAutoSaveDelay,
   setExplorerGitDecorations,
   setRestoreWindowState,
+  setShowBottomBar,
   setShowHidden,
-  setTerminalFontFamily,
-  setTerminalLetterSpacing,
-  setTerminalFontSize,
+  setShowTopBar,
   setTerminalCursorBlink,
+  setTerminalFontFamily,
+  setTerminalFontSize,
+  setTerminalLetterSpacing,
   setTerminalScrollback,
   setTerminalWebglEnabled,
   setVimMode,
   setZoomLevel,
+  TERMINAL_FONT_SIZES,
+  TERMINAL_SCROLLBACK_PRESETS,
 } from "@/modules/settings/store";
 import { useTheme } from "@/modules/theme";
 import {
@@ -72,6 +74,8 @@ export function GeneralSection() {
 
   const autostart = usePreferencesStore((s) => s.autostart);
   const restoreWindowState = usePreferencesStore((s) => s.restoreWindowState);
+  const showTopBar = usePreferencesStore((s) => s.showTopBar);
+  const showBottomBar = usePreferencesStore((s) => s.showBottomBar);
   const vimMode = usePreferencesStore((s) => s.vimMode);
   const editorAutoSave = usePreferencesStore((s) => s.editorAutoSave);
   const editorAutoSaveDelay = usePreferencesStore((s) => s.editorAutoSaveDelay);
@@ -148,6 +152,26 @@ export function GeneralSection() {
           For theme, background and customization, see the{" "}
           <strong className="font-medium text-foreground">Themes</strong> tab.
         </p>
+        <div className="mt-2 flex flex-col gap-2">
+          <SettingRow
+            title="Show top bar"
+            description="Display the header with tabs, search, workspace, and window controls."
+          >
+            <Switch
+              checked={showTopBar}
+              onCheckedChange={(v) => void setShowTopBar(v)}
+            />
+          </SettingRow>
+          <SettingRow
+            title="Show bottom bar"
+            description="Display the status bar with cwd, workspace, AI status, and file context."
+          >
+            <Switch
+              checked={showBottomBar}
+              onCheckedChange={(v) => void setShowBottomBar(v)}
+            />
+          </SettingRow>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -232,6 +256,7 @@ export function GeneralSection() {
                   <TooltipTrigger asChild>
                     <span
                       className="cursor-help text-[11px] text-muted-foreground/70 leading-none"
+                      role="img"
                       aria-label="More info about WebGL renderer"
                     >
                       ⓘ
