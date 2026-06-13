@@ -8,9 +8,9 @@ use crate::modules::git::process::{
     read_text_file, run_git,
 };
 use crate::modules::git::types::{
-    DiscardEntry, GitCommitFileChange, GitCommitResult, GitDiffContentResult, GitDiffResult,
-    GitLogEntry, GitOutput, GitPanelSnapshot, GitPushResult, GitRepoInfo, GitStatusSnapshot,
-    TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
+    DiscardEntry, GitBranchEntry, GitCommitFileChange, GitCommitResult, GitDiffContentResult,
+    GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot, GitPushResult, GitRepoInfo,
+    GitStatusSnapshot, TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
 };
 use crate::modules::git::utils::{
     authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream, ResolvedGitDirectory,
@@ -126,6 +126,116 @@ pub fn status(
     status_inner(&repo_root)
 }
 
+pub fn branches(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<Vec<GitBranchEntry>> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let current = git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    )?;
+    let lines = git_stdout_lines(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        [
+            "for-each-ref",
+            "--format=%(refname)\x1f%(upstream:short)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?;
+
+    let mut out = Vec::new();
+    for line in lines {
+        let (refname, upstream) = line.split_once('\x1f').unwrap_or((line.as_str(), ""));
+        if let Some(name) = refname.strip_prefix("refs/heads/") {
+            out.push(GitBranchEntry {
+                name: name.to_string(),
+                kind: "local".to_string(),
+                current: current.as_deref() == Some(name),
+                upstream: empty_to_none(upstream),
+            });
+            continue;
+        }
+        if let Some(name) = refname.strip_prefix("refs/remotes/") {
+            if name.ends_with("/HEAD") {
+                continue;
+            }
+            out.push(GitBranchEntry {
+                name: name.to_string(),
+                kind: "remote".to_string(),
+                current: false,
+                upstream: None,
+            });
+        }
+    }
+
+    out.sort_by(|a, b| {
+        b.current
+            .cmp(&a.current)
+            .then_with(|| branch_kind_rank(&a.kind).cmp(&branch_kind_rank(&b.kind)))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(out)
+}
+
+pub fn switch_branch(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    name: &str,
+    kind: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    if !is_safe_branch_ref(name) {
+        return Err(GitError::command("git switch", "invalid branch name"));
+    }
+
+    let output = if kind == "remote" {
+        let Some((_, local_name)) = name.split_once('/') else {
+            return Err(GitError::command("git switch", "invalid remote branch"));
+        };
+        if !is_safe_branch_ref(local_name) {
+            return Err(GitError::command("git switch", "invalid branch name"));
+        }
+        let local_ref = format!("refs/heads/{local_name}");
+        let local_exists = git_stdout_line_opt(
+            &repo_root.workspace,
+            &repo_root.git_path,
+            ["show-ref", "--verify", &local_ref],
+        )?
+        .is_some();
+        if local_exists {
+            run_git(
+                &repo_root.workspace,
+                Some(&repo_root.git_path),
+                ["switch", local_name],
+                DEFAULT_TIMEOUT_SECS,
+            )?
+        } else {
+            run_git(
+                &repo_root.workspace,
+                Some(&repo_root.git_path),
+                ["switch", "--track", name],
+                DEFAULT_TIMEOUT_SECS,
+            )?
+        }
+    } else {
+        run_git(
+            &repo_root.workspace,
+            Some(&repo_root.git_path),
+            ["switch", name],
+            DEFAULT_TIMEOUT_SECS,
+        )?
+    };
+    ensure_success(&output, "git switch failed")
+}
+
 fn status_inner(repo_root: &ResolvedGitDirectory) -> Result<GitStatusSnapshot> {
     let output = run_git(
         &repo_root.workspace,
@@ -154,6 +264,27 @@ fn status_inner(repo_root: &ResolvedGitDirectory) -> Result<GitStatusSnapshot> {
         truncated: output.truncated,
         changed_files: parsed.files,
     })
+}
+
+fn empty_to_none(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn branch_kind_rank(kind: &str) -> u8 {
+    if kind == "local" { 0 } else { 1 }
+}
+
+fn is_safe_branch_ref(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.contains("..")
+        && !name.contains('@')
+        && !name.contains('\\')
+        && !name.chars().any(|c| c.is_control())
 }
 
 pub fn diff(

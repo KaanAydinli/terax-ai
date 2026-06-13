@@ -44,6 +44,15 @@ pub struct GitStatusSnapshot {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitBranchEntry {
+    pub name: String,
+    pub kind: String,
+    pub current: bool,
+    pub upstream: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitPanelSnapshot {
     pub repo: Option<GitRepoInfo>,
     pub status: Option<GitStatusSnapshot>,

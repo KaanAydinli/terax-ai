@@ -200,6 +200,8 @@ pub fn run() {
             git::commands::git_resolve_repo,
             git::commands::git_panel_snapshot,
             git::commands::git_status,
+            git::commands::git_branches,
+            git::commands::git_switch_branch,
             git::commands::git_diff,
             git::commands::git_diff_content,
             git::commands::git_stage,

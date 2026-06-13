@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import { currentWorkspaceEnv } from "@/modules/workspace";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ReadResult =
   | { kind: "text"; content: string; size: number }
@@ -65,6 +65,13 @@ export type GitStatusSnapshot = {
   isDetached: boolean;
   truncated: boolean;
   changedFiles: GitChangedFile[];
+};
+
+export type GitBranchEntry = {
+  name: string;
+  kind: "local" | "remote";
+  current: boolean;
+  upstream: string | null;
 };
 
 export type GitDiffResult = {
@@ -181,11 +188,7 @@ export const native = {
       maxResults: params.maxResults ?? null,
       workspace: currentWorkspaceEnv(),
     }),
-  runCommand: (
-    command: string,
-    cwd?: string | null,
-    timeoutSecs?: number,
-  ) =>
+  runCommand: (command: string, cwd?: string | null, timeoutSecs?: number) =>
     invoke<CommandOutput>("shell_run_command", {
       command,
       cwd: cwd ?? null,
@@ -261,6 +264,18 @@ export const native = {
       repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
+  gitBranches: (repoRoot: string) =>
+    invoke<GitBranchEntry[]>("git_branches", {
+      repoRoot,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitSwitchBranch: (repoRoot: string, branch: GitBranchEntry) =>
+    invoke<void>("git_switch_branch", {
+      repoRoot,
+      name: branch.name,
+      kind: branch.kind,
+      workspace: currentWorkspaceEnv(),
+    }),
   gitDiff: (repoRoot: string, path: string | null, staged: boolean) =>
     invoke<GitDiffResult>("git_diff", {
       repoRoot,
@@ -320,7 +335,10 @@ export const native = {
       repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
-  gitLog: (repoRoot: string, options?: { limit?: number; beforeSha?: string }) =>
+  gitLog: (
+    repoRoot: string,
+    options?: { limit?: number; beforeSha?: string },
+  ) =>
     invoke<GitLogEntry[]>("git_log", {
       repoRoot,
       limit: options?.limit ?? null,

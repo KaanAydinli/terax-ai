@@ -17,6 +17,11 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -27,6 +32,7 @@ import {
 } from "@/components/ui/tooltip";
 import { IS_MAC } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import { type GitBranchEntry, native } from "@/modules/ai/lib/native";
 import {
   copyToClipboard,
   revealInFinder,
@@ -120,6 +126,15 @@ function upstreamBadgeLabel(upstream: string | null | undefined): string {
   return upstream;
 }
 
+function normalizeError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return "Unknown Git error";
+}
+
 function statusAccent(code: string): string {
   switch (code) {
     case "A":
@@ -156,6 +171,11 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+  const [branches, setBranches] = useState<GitBranchEntry[]>([]);
+  const [branchLoading, setBranchLoading] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const [switchingBranch, setSwitchingBranch] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -170,6 +190,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     if (!scm.status) return "Source Control";
     return scm.status.isDetached ? "detached" : scm.status.branch;
   }, [scm.status]);
+  const repoRoot = scm.status?.repoRoot ?? sourceControl.repo?.repoRoot ?? null;
 
   const commitShortcut = IS_MAC ? "⌘↩" : "Ctrl+Enter";
   const generateShortcut = IS_MAC ? "⌘G" : "Ctrl+G";
@@ -213,6 +234,8 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     !scm.actionBusy &&
     !sourceControl.busyAction;
   const canFetch = hasUpstream && !scm.actionBusy && !sourceControl.busyAction;
+  const canSwitchBranch =
+    !!repoRoot && !scm.actionBusy && !sourceControl.busyAction;
 
   const footerFeedback = useMemo(() => {
     if (scm.actionError)
@@ -269,6 +292,42 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     void scm.push();
   }, [scm]);
 
+  const loadBranches = useCallback(async () => {
+    if (!repoRoot) return;
+    setBranchLoading(true);
+    setBranchError(null);
+    try {
+      setBranches(await native.gitBranches(repoRoot));
+    } catch (error) {
+      setBranchError(normalizeError(error));
+    } finally {
+      setBranchLoading(false);
+    }
+  }, [repoRoot]);
+
+  useEffect(() => {
+    if (!branchPickerOpen) return;
+    void loadBranches();
+  }, [branchPickerOpen, loadBranches]);
+
+  const handleSwitchBranch = useCallback(
+    async (branch: GitBranchEntry) => {
+      if (!repoRoot || branch.current || switchingBranch) return;
+      setSwitchingBranch(branch.name);
+      setBranchError(null);
+      try {
+        await native.gitSwitchBranch(repoRoot, branch);
+        setBranchPickerOpen(false);
+        await sourceControl.refresh({ remote: "never" });
+      } catch (error) {
+        setBranchError(normalizeError(error));
+      } finally {
+        setSwitchingBranch(null);
+      }
+    },
+    [repoRoot, sourceControl, switchingBranch],
+  );
+
   const rows = useMemo<RowDescriptor[]>(() => {
     const result: RowDescriptor[] = [];
     if (isDiverged) {
@@ -289,7 +348,9 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
   const rowKeyToIndex = useMemo(() => {
     const map = new Map<string, number>();
-    rows.forEach((row, index) => map.set(row.key, index));
+    rows.forEach((row, index) => {
+      map.set(row.key, index);
+    });
     return map;
   }, [rows]);
 
@@ -337,7 +398,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
       if (focusableIndices.length === 0) return;
       const currentIndex =
         focusedRowKey === null ? -1 : (rowKeyToIndex.get(focusedRowKey) ?? -1);
-      let pos = focusableIndices.findIndex((i) => i === currentIndex);
+      let pos = focusableIndices.indexOf(currentIndex);
       if (pos === -1) pos = direction > 0 ? -1 : focusableIndices.length;
       let nextPos = pos + direction;
       if (nextPos < 0) nextPos = 0;
@@ -409,7 +470,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
         case "D": {
           if (meta) break;
           const entry = focusedEntry();
-          if (entry && entry.unstaged) {
+          if (entry?.unstaged) {
             event.preventDefault();
             scm.requestDiscardFile(entry);
           }
@@ -431,15 +492,103 @@ export const SourceControlPanel = memo(function SourceControlPanel({
       <aside className="flex h-full min-w-0 flex-col bg-card/80 backdrop-blur [contain:layout_style]">
         <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 pb-2.5 pt-3">
           <div className="flex min-w-0 items-center gap-1.5">
-            <div className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-foreground/5 px-2 py-1 text-[11.5px] font-medium leading-none text-foreground transition-colors hover:bg-foreground/10">
-              <HugeiconsIcon
-                icon={FolderGitTwoIcon}
-                size={12}
-                strokeWidth={1.9}
-                className="shrink-0 text-muted-foreground"
-              />
-              <span className="max-w-[140px] truncate">{repoLabel}</span>
-            </div>
+            <Popover open={branchPickerOpen} onOpenChange={setBranchPickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  disabled={!repoRoot}
+                  className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md bg-foreground/5 px-2 py-1 text-[11.5px] font-medium leading-none text-foreground transition-colors hover:bg-foreground/10 disabled:cursor-default disabled:opacity-70"
+                >
+                  <HugeiconsIcon
+                    icon={FolderGitTwoIcon}
+                    size={12}
+                    strokeWidth={1.9}
+                    className="shrink-0 text-muted-foreground"
+                  />
+                  <span className="max-w-[140px] truncate">{repoLabel}</span>
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    size={10}
+                    strokeWidth={2}
+                    className="shrink-0 text-muted-foreground/70"
+                  />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-72 gap-0 rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
+              >
+                <div className="flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
+                  <HugeiconsIcon
+                    icon={GitBranchIcon}
+                    size={13}
+                    strokeWidth={1.9}
+                  />
+                  Branches
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {branchLoading ? (
+                    <div className="flex items-center gap-2 px-2 py-2 text-[11.5px] text-muted-foreground">
+                      <Spinner className="size-3" />
+                      Loading branches...
+                    </div>
+                  ) : branches.length === 0 ? (
+                    <div className="px-2 py-2 text-[11.5px] text-muted-foreground">
+                      No branches found.
+                    </div>
+                  ) : (
+                    branches.map((branch) => (
+                      <button
+                        key={`${branch.kind}:${branch.name}`}
+                        type="button"
+                        disabled={
+                          branch.current ||
+                          !canSwitchBranch ||
+                          switchingBranch !== null
+                        }
+                        onClick={() => void handleSwitchBranch(branch)}
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors",
+                          branch.current
+                            ? "bg-accent/45 text-foreground"
+                            : "text-muted-foreground hover:bg-accent/35 hover:text-foreground",
+                          "disabled:cursor-default",
+                        )}
+                      >
+                        {switchingBranch === branch.name ? (
+                          <Spinner className="size-3 shrink-0" />
+                        ) : branch.current ? (
+                          <HugeiconsIcon
+                            icon={CheckmarkCircle01Icon}
+                            size={13}
+                            strokeWidth={1.9}
+                            className="shrink-0 text-emerald-500"
+                          />
+                        ) : (
+                          <HugeiconsIcon
+                            icon={GitBranchIcon}
+                            size={13}
+                            strokeWidth={1.8}
+                            className="shrink-0"
+                          />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">
+                          {branch.name}
+                        </span>
+                        <span className="shrink-0 rounded border border-border/55 px-1 py-0.5 text-[9.5px] uppercase leading-none text-muted-foreground/75">
+                          {branch.kind}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+                {branchError ? (
+                  <div className="border-t border-border/60 px-2 py-1.5 text-[11px] text-destructive">
+                    {branchError}
+                  </div>
+                ) : null}
+              </PopoverContent>
+            </Popover>
             {scm.status && (scm.status.ahead > 0 || scm.status.behind > 0) ? (
               <div className="flex shrink-0 items-center gap-0.5 text-[10px] font-semibold tabular-nums leading-none text-muted-foreground">
                 {scm.status.ahead > 0 ? (
@@ -945,9 +1094,13 @@ function ListHeader({
       <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-border/60 px-1 text-[9.5px] font-semibold tabular-nums text-muted-foreground">
         {row.count}
       </span>
-      <label className="ml-auto flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[10.5px] font-medium text-muted-foreground hover:text-foreground">
+      <label
+        htmlFor="source-control-stage-all"
+        className="ml-auto flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[10.5px] font-medium text-muted-foreground hover:text-foreground"
+      >
         <span>All</span>
         <Checkbox
+          id="source-control-stage-all"
           aria-label="Stage all changes"
           checked={checkboxValue(headerCheckState)}
           disabled={actionBusy !== null}
@@ -1000,6 +1153,7 @@ const EntryRow = memo(function EntryRow({
           data-selected={isSelected || undefined}
           role="option"
           aria-selected={isSelected}
+          tabIndex={focused ? 0 : -1}
           onMouseDown={() => onFocusRow(row.key)}
           className={cn(
             "group relative flex h-[30px] items-center gap-2 rounded-md pl-2 pr-2 transition-all duration-100",

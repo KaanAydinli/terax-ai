@@ -94,6 +94,36 @@ fn status_lists_untracked_file() {
 }
 
 #[test]
+fn branches_list_and_switch_local_branch() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("seed.txt", "seed\n");
+    fx.run_git(&["add", "seed.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    fx.run_git(&["branch", "feature/test"]);
+
+    let branches = operations::branches(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("branches");
+    assert!(branches.iter().any(|b| b.name == "main" && b.current));
+    assert!(branches
+        .iter()
+        .any(|b| b.name == "feature/test" && b.kind == "local"));
+
+    operations::switch_branch(
+        &fx.registry,
+        &fx.repo_str(),
+        "feature/test",
+        "local",
+        &fx.workspace,
+    )
+    .expect("switch branch");
+    let snap = operations::status(&fx.registry, &fx.repo_str(), &fx.workspace).unwrap();
+    assert_eq!(snap.branch, "feature/test");
+}
+
+#[test]
 fn stage_then_commit_produces_log_entry() {
     if skip_if_no_git() {
         return;
