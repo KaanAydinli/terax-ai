@@ -13,14 +13,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fmtShortcut, MOD_KEY, SHIFT_KEY } from "@/lib/platform";
+import { fmtShortcut, MOD_KEY } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { fileIconUrl } from "@/modules/explorer/lib/iconResolver";
 import {
   Cancel01Icon,
   Clock01Icon,
   ComputerTerminal02Icon,
-  GitBranchIcon,
   GitCompareIcon,
   Globe02Icon,
   IncognitoIcon,
@@ -43,11 +42,9 @@ type Props = {
   activeId: number;
   onSelect: (id: number) => void;
   onNew: () => void;
-  onNewBlock: () => void;
   onNewPrivate: () => void;
   onNewPreview: () => void;
   onNewEditor: () => void;
-  onNewGitGraph: () => void;
   onClose: (id: number) => void;
   /** Pin (promote) a preview tab to persistent on double-click. */
   onPin: (id: number) => void;
@@ -61,11 +58,9 @@ export function TabBar({
   activeId,
   onSelect,
   onNew,
-  onNewBlock,
   onNewPrivate,
   onNewPreview,
   onNewEditor,
-  onNewGitGraph,
   onClose,
   onPin,
   onRename,
@@ -342,17 +337,6 @@ export function TabBar({
                 {fmtShortcut(MOD_KEY, "T")}
               </span>
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onNewBlock()}>
-              <HugeiconsIcon
-                icon={ComputerTerminal02Icon}
-                size={14}
-                strokeWidth={1.75}
-              />
-              <span className="flex-1">Blocks</span>
-              <span className="text-xs text-muted-foreground">
-                {fmtShortcut(MOD_KEY, SHIFT_KEY, "T")}
-              </span>
-            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onNewPrivate()}>
               <HugeiconsIcon
                 icon={IncognitoIcon}
@@ -381,14 +365,6 @@ export function TabBar({
               <span className="text-xs text-muted-foreground">
                 {fmtShortcut(MOD_KEY, "P")}
               </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onNewGitGraph()}>
-              <HugeiconsIcon
-                icon={GitBranchIcon}
-                size={14}
-                strokeWidth={1.75}
-              />
-              <span className="flex-1">Git Graph</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
