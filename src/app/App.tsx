@@ -1320,14 +1320,15 @@ function LocalhostLinkPreviewPopup({
 
   return (
     <div
+      role="tooltip"
       className="fixed z-50 rounded-md border border-border/70 bg-popover p-1 text-popover-foreground shadow-xl"
       style={{ left, top, width }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <button
         type="button"
         className="flex h-8 w-full items-center justify-center gap-2 rounded px-2 text-[12px] hover:bg-accent hover:text-accent-foreground"
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onOpen(hover.uri)}
       >
