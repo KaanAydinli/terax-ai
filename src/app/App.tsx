@@ -7,9 +7,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { getLaunchDir } from "@/lib/launchDir";
 import { isLocalhostUrl } from "@/lib/localUrl";
-import { usePresence } from "@/lib/usePresence";
 import { quoteShellArg } from "@/lib/shellQuote";
+import { usePresence } from "@/lib/usePresence";
 import { useZoom } from "@/lib/useZoom";
+import { isMarkdownPath } from "@/lib/utils";
 import { AgentNotificationsBridge } from "@/modules/agents";
 import {
   AgentRunBridge,
@@ -25,9 +26,9 @@ import { AiComposerProvider } from "@/modules/ai/lib/composer";
 import { native } from "@/modules/ai/lib/native";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
 import {
+  type EditorPaneHandle,
   NewEditorDialog,
   useEditorFileSync,
-  type EditorPaneHandle,
 } from "@/modules/editor";
 import { FileExplorer, type FileExplorerHandle } from "@/modules/explorer";
 import type { GitHistorySearchHandle } from "@/modules/git-history";
@@ -39,24 +40,30 @@ import {
 import type { PreviewPaneHandle } from "@/modules/preview";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { isMarkdownPath } from "@/lib/utils";
 import {
-  useGlobalShortcuts,
   type ShortcutHandlers,
   type ShortcutId,
+  useGlobalShortcuts,
 } from "@/modules/shortcuts";
 import {
-  SidebarRail,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SidebarRail,
   useSidebarPanel,
 } from "@/modules/sidebar";
 import {
   SourceControlPanel,
   useSourceControlContext,
 } from "@/modules/source-control";
+import {
+  SpaceSwitcher,
+  useSpacePersistence,
+  useSpaces,
+  useSpacesBoot,
+} from "@/modules/spaces";
 import { StatusBar } from "@/modules/statusbar";
 import { useTabs, useWindowTitle, useWorkspaceCwd } from "@/modules/tabs";
+import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
 import {
   clearFocusedTerminal,
   configureTerminalLinkActions,
@@ -71,13 +78,6 @@ import {
   useTerminalFileDrop,
   writeToSession,
 } from "@/modules/terminal";
-import {
-  SpaceSwitcher,
-  useSpaces,
-  useSpacePersistence,
-  useSpacesBoot,
-} from "@/modules/spaces";
-import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore } from "@/modules/workspace";
@@ -591,6 +591,12 @@ export default function App() {
       linkPopupHideTimer.current = null;
     }, 180);
   }, [clearLinkPopupHideTimer]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId intentionally resets popup state when the active tab changes.
+  useEffect(() => {
+    clearLinkPopupHideTimer();
+    setLocalhostLinkPopup(null);
+  }, [activeId, clearLinkPopupHideTimer]);
 
   useEffect(() => clearLinkPopupHideTimer, [clearLinkPopupHideTimer]);
 
