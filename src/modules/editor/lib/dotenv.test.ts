@@ -57,4 +57,12 @@ describe("dotenv tokenizer", () => {
       ["abc#123", "string"],
     ]);
   });
+
+  it("keeps hashes at the start of unquoted values", () => {
+    expect(tokenizeLine("KEY=#hash")).toEqual([
+      ["KEY", "variableName.definition"],
+      ["=", "operator"],
+      ["#hash", "string"],
+    ]);
+  });
 });

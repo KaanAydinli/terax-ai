@@ -77,7 +77,7 @@ export const dotenv: StreamParser<DotenvState> = {
       return null;
     }
 
-    if (stream.peek() === "#") {
+    if (state.mode !== "value" && stream.peek() === "#") {
       stream.skipToEnd();
       return "comment";
     }
