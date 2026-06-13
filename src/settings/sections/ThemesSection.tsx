@@ -13,11 +13,14 @@ import {
   deleteBgImage,
   importBgImageFromFile,
 } from "@/modules/theme/bgImageStore";
-import { deleteCustomTheme, saveCustomTheme } from "@/modules/theme/customThemes";
-import { listBuiltinThemes } from "@/modules/theme/themes";
-import { validateTheme } from "@/modules/theme/validateTheme";
+import {
+  deleteCustomTheme,
+  saveCustomTheme,
+} from "@/modules/theme/customThemes";
 import { deleteThemeFile, emitThemeEdit } from "@/modules/theme/themeFiles";
+import { listBuiltinThemes } from "@/modules/theme/themes";
 import { DEFAULT_THEME_ID } from "@/modules/theme/types";
+import { validateTheme } from "@/modules/theme/validateTheme";
 import { Edit02Icon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -178,8 +181,14 @@ export function ThemesSection() {
             const c = v?.colors;
             const swatchBg = c?.background ?? "var(--background)";
             const swatchFg = c?.foreground ?? "var(--foreground)";
-            const swatchAccent = c?.primary ?? c?.accent ?? "var(--accent)";
-            const swatchMuted = c?.muted ?? "var(--muted)";
+            const swatchAccent =
+              t.id === "terax-vscode-dark-modern"
+                ? "#4daafc"
+                : (c?.primary ?? c?.accent ?? "var(--accent)");
+            const swatchMuted =
+              t.id === "terax-vscode-dark-modern"
+                ? "rgba(77, 170, 252, 0.18)"
+                : (c?.muted ?? "var(--muted)");
             const selected = themeId === t.id;
             const isCustom = customIds.has(t.id);
             return (
@@ -232,7 +241,11 @@ export function ThemesSection() {
                         onEditTheme(t.id);
                       }}
                     >
-                      <HugeiconsIcon icon={Edit02Icon} size={12} strokeWidth={1.75} />
+                      <HugeiconsIcon
+                        icon={Edit02Icon}
+                        size={12}
+                        strokeWidth={1.75}
+                      />
                     </span>
                     <span
                       role="button"

@@ -1,4 +1,15 @@
 import {
+  DEFAULT_THEME_ID,
+  EDITOR_THEMES,
+  type EditorThemeId,
+  loadPreferences,
+  onPreferencesChange,
+  setEditorTheme as persistEditorTheme,
+  setTheme as persistTheme,
+  setThemeId as persistThemeId,
+  type ThemePref,
+} from "@/modules/settings/store";
+import {
   createContext,
   useCallback,
   useContext,
@@ -7,22 +18,8 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  DEFAULT_THEME_ID,
-  EDITOR_THEMES,
-  loadPreferences,
-  onPreferencesChange,
-  setEditorTheme as persistEditorTheme,
-  setTheme as persistTheme,
-  setThemeId as persistThemeId,
-  type EditorThemeId,
-  type ThemePref,
-} from "@/modules/settings/store";
 import { applyTheme, clearTheme } from "./applyTheme";
-import {
-  listCustomThemes,
-  onCustomThemesChange,
-} from "./customThemes";
+import { listCustomThemes, onCustomThemesChange } from "./customThemes";
 import { SurfaceLayer } from "./SurfaceLayer";
 import { getBuiltinTheme, getDefaultTheme } from "./themes";
 import type { Theme } from "./types";
@@ -58,7 +55,11 @@ function readFastMode(fallback: ThemePref): ThemePref {
 }
 
 function writeFastMode(t: ThemePref): void {
-  try { window.localStorage.setItem(FAST_PATH_KEY, t); } catch { /* ignore */ }
+  try {
+    window.localStorage.setItem(FAST_PATH_KEY, t);
+  } catch {
+    /* ignore */
+  }
 }
 
 function readFastThemeId(): string {
@@ -67,15 +68,36 @@ function readFastThemeId(): string {
 }
 
 function writeFastThemeId(id: string): void {
-  try { window.localStorage.setItem(FAST_PATH_THEME_ID, id); } catch { /* ignore */ }
+  try {
+    window.localStorage.setItem(FAST_PATH_THEME_ID, id);
+  } catch {
+    /* ignore */
+  }
 }
 
 function resolveTheme(id: string, custom: Theme[]): Theme {
-  return custom.find((t) => t.id === id) ?? getBuiltinTheme(id) ?? getDefaultTheme();
+  return (
+    custom.find((t) => t.id === id) ?? getBuiltinTheme(id) ?? getDefaultTheme()
+  );
 }
 
-export function ThemeProvider({ children, defaultMode = "system" }: ThemeProviderProps) {
-  const [mode, setModeState] = useState<ThemePref>(() => readFastMode(defaultMode));
+function editorThemeFor(
+  theme: Theme,
+  mode: "dark" | "light",
+): EditorThemeId | null {
+  const editorPair = theme.editorTheme?.[mode];
+  return editorPair && (EDITOR_THEMES as readonly string[]).includes(editorPair)
+    ? (editorPair as EditorThemeId)
+    : null;
+}
+
+export function ThemeProvider({
+  children,
+  defaultMode = "system",
+}: ThemeProviderProps) {
+  const [mode, setModeState] = useState<ThemePref>(() =>
+    readFastMode(defaultMode),
+  );
   const [themeId, setThemeIdState] = useState<string>(() => readFastThemeId());
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
@@ -95,7 +117,10 @@ export function ThemeProvider({ children, defaultMode = "system" }: ThemeProvide
       writeFastThemeId(p.themeId);
     });
     const unlistenP = onPreferencesChange((key, value) => {
-      if (key === "theme" && (value === "system" || value === "light" || value === "dark")) {
+      if (
+        key === "theme" &&
+        (value === "system" || value === "light" || value === "dark")
+      ) {
         setModeState(value);
         writeFastMode(value);
       } else if (key === "themeId" && typeof value === "string") {
@@ -111,7 +136,9 @@ export function ThemeProvider({ children, defaultMode = "system" }: ThemeProvide
 
   useEffect(() => {
     let alive = true;
-    void listCustomThemes().then((list) => { if (alive) setCustomThemes(list); });
+    void listCustomThemes().then((list) => {
+      if (alive) setCustomThemes(list);
+    });
     const unlisten = onCustomThemesChange(() => {
       void listCustomThemes().then((list) => setCustomThemes(list));
     });
@@ -142,20 +169,22 @@ export function ThemeProvider({ children, defaultMode = "system" }: ThemeProvide
   useEffect(() => {
     if (effectiveId === DEFAULT_THEME_ID) {
       clearTheme();
-      if (!previewId) lastEditorPairRef.current = null;
+      if (!previewId) {
+        const editorTheme = editorThemeFor(getDefaultTheme(), resolvedMode);
+        if (editorTheme && lastEditorPairRef.current !== editorTheme) {
+          lastEditorPairRef.current = editorTheme;
+          void persistEditorTheme(editorTheme);
+        }
+      }
       return;
     }
     const theme = resolveTheme(effectiveId, customThemes);
     applyTheme(theme, resolvedMode);
     if (previewId) return;
-    const editorPair = theme.editorTheme?.[resolvedMode];
-    if (
-      editorPair &&
-      lastEditorPairRef.current !== editorPair &&
-      (EDITOR_THEMES as readonly string[]).includes(editorPair)
-    ) {
-      lastEditorPairRef.current = editorPair;
-      void persistEditorTheme(editorPair as EditorThemeId);
+    const editorTheme = editorThemeFor(theme, resolvedMode);
+    if (editorTheme && lastEditorPairRef.current !== editorTheme) {
+      lastEditorPairRef.current = editorTheme;
+      void persistEditorTheme(editorTheme);
     }
   }, [effectiveId, previewId, resolvedMode, customThemes]);
 
@@ -186,7 +215,15 @@ export function ThemeProvider({ children, defaultMode = "system" }: ThemeProvide
       setThemeId,
       previewThemeId,
     }),
-    [mode, resolvedMode, themeId, customThemes, setMode, setThemeId, previewThemeId],
+    [
+      mode,
+      resolvedMode,
+      themeId,
+      customThemes,
+      setMode,
+      setThemeId,
+      previewThemeId,
+    ],
   );
 
   return (

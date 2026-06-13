@@ -1,15 +1,15 @@
 import {
+  type AutocompleteProviderId,
+  type CustomEndpoint,
   DEFAULT_AUTOCOMPLETE_MODEL,
   DEFAULT_MODEL_ID,
   isKnownModelId,
   LMSTUDIO_DEFAULT_BASE_URL,
   MLX_DEFAULT_BASE_URL,
-  OLLAMA_DEFAULT_BASE_URL,
-  migrateLegacyCompatEndpoint,
-  OPENAI_COMPATIBLE_DEFAULT_BASE_URL,
-  type AutocompleteProviderId,
-  type CustomEndpoint,
   type ModelId,
+  migrateLegacyCompatEndpoint,
+  OLLAMA_DEFAULT_BASE_URL,
+  OPENAI_COMPATIBLE_DEFAULT_BASE_URL,
 } from "@/modules/ai/config";
 import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -23,6 +23,7 @@ export type BackgroundKind = "none" | "image";
 
 export const EDITOR_THEMES = [
   "atomone",
+  "terax-vscode-dark-modern",
   "aura",
   "copilot",
   "github-dark",
@@ -38,6 +39,7 @@ export type EditorThemeId = (typeof EDITOR_THEMES)[number];
 
 export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
   atomone: "Atom One",
+  "terax-vscode-dark-modern": "Terax + VS Code Dark Modern",
   aura: "Aura",
   copilot: "Copilot",
   "github-dark": "GitHub Dark",
@@ -566,7 +568,7 @@ export async function setAgentNotifications(value: boolean): Promise<void> {
 }
 
 export async function setShortcuts(
-  value: Record<ShortcutId, KeyBinding[]> | {},
+  value: Record<ShortcutId, KeyBinding[]> | Record<string, never>,
 ): Promise<void> {
   await writePref(KEY_SHORTCUTS, value);
 }

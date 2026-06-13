@@ -7,11 +7,13 @@ import { nord } from "./nord";
 import { rosePine } from "./rose-pine";
 import { sage } from "./sage";
 import { teraxDefault } from "./terax-default";
+import { teraxVscodeDarkModern } from "./terax-vscode-dark-modern";
 import { tide } from "./tide";
 import { tokyoNight } from "./tokyo-night";
 
 const BUILTIN: Theme[] = [
   teraxDefault,
+  teraxVscodeDarkModern,
   claude,
   tokyoNight,
   nord,
