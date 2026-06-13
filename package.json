@@ -12,6 +12,7 @@
     "dev": "vite",
     "dev:inspect": "INSPECT=true vite",
     "build": "tsc && vite build",
+    "install:local": "bash scripts/install-local-linux.sh",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
