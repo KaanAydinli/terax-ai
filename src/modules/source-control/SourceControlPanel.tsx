@@ -47,11 +47,7 @@ import {
   COMPACT_ITEM,
 } from "@/modules/explorer/lib/menuItemClass";
 import { joinPath } from "@/modules/explorer/lib/useFileTree";
-import {
-  GraphRail,
-  MAX_VISIBLE_LANES,
-  railWidth,
-} from "@/modules/git-history/GraphRail";
+import { GraphRail, railWidth } from "@/modules/git-history/GraphRail";
 import {
   EMPTY_GRAPH_STATE,
   type GraphRow,
@@ -65,6 +61,7 @@ import {
   ArrowRight01Icon,
   ArrowUp01Icon,
   CheckmarkCircle01Icon,
+  Copy01Icon,
   Download01Icon,
   FolderCloudIcon,
   FolderGitTwoIcon,
@@ -119,7 +116,6 @@ const GRAPH_ROW_HEIGHT = 30;
 const GRAPH_NEAR_BOTTOM_PX = 180;
 const MIN_GRAPH_HEIGHT = 140;
 const MAX_GRAPH_HEIGHT = 520;
-const GRAPH_RAIL_RESERVED_PX = railWidth(MAX_VISIBLE_LANES) + 2;
 
 type RowDescriptor =
   | { kind: "banner-diverged"; key: string }
@@ -1159,7 +1155,7 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
     maxLaneCount: 1,
   });
 
-  const { graphByCommit, maxLaneCount } = useMemo(() => {
+  const { graphByCommit } = useMemo(() => {
     const cache = graphCacheRef.current;
     if (commits.length === 0) {
       cache.rows = [];
@@ -1341,7 +1337,6 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
               <InlineCommitRow
                 commit={commit}
                 graphRow={graphByCommit.get(commit.sha) ?? null}
-                maxLaneCount={maxLaneCount}
               />
             </div>
           );
@@ -1378,27 +1373,33 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
 type InlineCommitRowProps = {
   commit: GitLogEntry;
   graphRow: GraphRow | null;
-  maxLaneCount: number;
 };
 
 const InlineCommitRow = memo(function InlineCommitRow({
   commit,
   graphRow,
-  maxLaneCount,
 }: InlineCommitRowProps) {
   const total = commit.insertions + commit.deletions;
+  const visibleLaneCount = graphRow?.laneCount ?? 1;
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(false), 1100);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
 
   return (
-    <div className="grid h-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b border-border/25 pr-2 text-left transition-colors hover:bg-accent/25">
+    <div className="grid h-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 border-b border-border/25 pr-2 text-left transition-colors hover:bg-accent/25">
       <div
         className="flex justify-start pl-1"
-        style={{ width: GRAPH_RAIL_RESERVED_PX }}
+        style={{ width: Math.max(18, railWidth(visibleLaneCount) - 6) }}
       >
         {graphRow ? (
           <GraphRail
             row={graphRow}
             rowHeight={GRAPH_ROW_HEIGHT}
-            maxLaneCount={maxLaneCount}
+            maxLaneCount={visibleLaneCount}
           />
         ) : null}
       </div>
@@ -1408,8 +1409,35 @@ const InlineCommitRow = memo(function InlineCommitRow({
             <span className="text-muted-foreground">(no subject)</span>
           )}
         </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9.5px] leading-none text-muted-foreground">
+        <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[9.5px] leading-none text-muted-foreground">
           <span className="font-mono tabular-nums">{commit.shortSha}</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Copy commit id ${commit.shortSha}`}
+                className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none"
+                onClick={() => {
+                  void copyToClipboard(commit.sha).then(() => setCopied(true));
+                }}
+              >
+                <HugeiconsIcon
+                  icon={copied ? CheckmarkCircle01Icon : Copy01Icon}
+                  size={10}
+                  strokeWidth={1.9}
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="top"
+              className={cn(
+                SOURCE_CONTROL_TOOLTIP_CLASS,
+                "px-2 py-1 text-[10.5px]",
+              )}
+            >
+              {copied ? "Copied" : "Copy commit id"}
+            </TooltipContent>
+          </Tooltip>
           <span className="size-[3px] rounded-full bg-muted-foreground/35" />
           <span className="truncate">{commit.author || "Unknown"}</span>
         </div>
