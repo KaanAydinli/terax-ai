@@ -5,7 +5,7 @@ import {
 } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getLaunchDir } from "@/lib/launchDir";
+import { getLaunchDir, isLaunchDirExplicit } from "@/lib/launchDir";
 import { isLocalhostUrl } from "@/lib/localUrl";
 import { usePresence } from "@/lib/usePresence";
 import { quoteShellArg } from "@/lib/shellQuote";
@@ -110,6 +110,8 @@ function normalizeTerminalAgent(
 }
 
 export default function App() {
+  const launchDir = getLaunchDir();
+  const launchDirExplicit = isLaunchDirExplicit();
   const {
     tabs,
     activeId,
@@ -146,7 +148,7 @@ export default function App() {
     closeActivePane,
     closePaneByLeaf,
     resetWorkspace,
-  } = useTabs(getLaunchDir() ? { cwd: getLaunchDir() } : undefined);
+  } = useTabs(launchDir ? { cwd: launchDir } : undefined);
 
   // Mirror `tabs` into a ref so callbacks scheduled with `setTimeout`
   // (e.g. cdInNewTab) read the latest pane state instead of a stale closure.
@@ -207,6 +209,7 @@ export default function App() {
   useSpacesBoot({
     ready: launchCwdResolved,
     launchCwd,
+    explicitLaunch: launchDirExplicit,
     home,
     allocId,
     replaceTabs,
