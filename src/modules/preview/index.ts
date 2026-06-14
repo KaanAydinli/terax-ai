@@ -1,2 +1,2 @@
-export { PreviewStack } from "./PreviewStack";
+export { PreviewStack } from "./PreviewStackLazy";
 export type { PreviewPaneHandle } from "./PreviewPane";

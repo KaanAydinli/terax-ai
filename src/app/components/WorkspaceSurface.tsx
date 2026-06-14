@@ -110,12 +110,14 @@ export function WorkspaceSurface({
         )}
         aria-hidden={!isPreviewTab}
       >
-        <PreviewStack
-          tabs={tabs}
-          activeId={activeId}
-          registerHandle={registerPreviewHandle}
-          onUrlChange={onPreviewUrlChange}
-        />
+        {isPreviewTab ? (
+          <PreviewStack
+            tabs={tabs}
+            activeId={activeId}
+            registerHandle={registerPreviewHandle}
+            onUrlChange={onPreviewUrlChange}
+          />
+        ) : null}
       </div>
       <div
         className={cn(

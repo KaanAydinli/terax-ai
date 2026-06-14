@@ -570,17 +570,35 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   }, []);
 
   const newPreviewTab = useCallback((url: string) => {
-    const id = nextIdRef.current++;
-    setTabs((t) => [
-      ...t,
-      {
-        id,
-        kind: "preview",
-        spaceId: activeSpaceIdRef.current,
-        title: titleFromUrl(url),
-        url,
-      },
-    ]);
+    let targetId: number | null = null;
+    setTabs((curr) => {
+      const existing = url
+        ? curr.find(
+            (t) =>
+              t.kind === "preview" &&
+              t.spaceId === activeSpaceIdRef.current &&
+              t.url === url,
+          )
+        : null;
+      if (existing) {
+        targetId = existing.id;
+        return curr;
+      }
+
+      const id = nextIdRef.current++;
+      targetId = id;
+      return [
+        ...curr,
+        {
+          id,
+          kind: "preview",
+          spaceId: activeSpaceIdRef.current,
+          title: titleFromUrl(url),
+          url,
+        },
+      ];
+    });
+    const id = targetId ?? activeIdRef.current;
     setActiveId(id);
     return id;
   }, []);

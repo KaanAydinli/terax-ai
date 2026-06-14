@@ -1,6 +1,6 @@
-import { cn } from "@/lib/utils";
-import type { PreviewTab, Tab } from "@/modules/tabs";
+import type { Tab } from "@/modules/tabs";
 import { useEffect, useRef } from "react";
+import { selectLivePreview } from "./lib/livePreview";
 import { PreviewPane, type PreviewPaneHandle } from "./PreviewPane";
 
 type Props = {
@@ -16,9 +16,7 @@ export function PreviewStack({
   onUrlChange,
   registerHandle,
 }: Props) {
-  const previews = tabs.filter(
-    (t): t is PreviewTab => t.kind === "preview" && !t.cold,
-  );
+  const preview = selectLivePreview(tabs, activeId);
 
   const registerRef = useRef(registerHandle);
   const urlChangeRef = useRef(onUrlChange);
@@ -52,38 +50,24 @@ export function PreviewStack({
   };
 
   useEffect(() => {
-    const live = new Set(previews.map((t) => t.id));
+    const live = new Set(preview ? [preview.id] : []);
     for (const id of refCallbacks.current.keys()) {
       if (!live.has(id)) refCallbacks.current.delete(id);
     }
     for (const id of urlCallbacks.current.keys()) {
       if (!live.has(id)) urlCallbacks.current.delete(id);
     }
-  }, [previews]);
+  }, [preview]);
 
-  if (previews.length === 0) return null;
+  if (!preview) return null;
   return (
     <div className="relative h-full w-full">
-      {previews.map((t) => {
-        const visible = t.id === activeId;
-        return (
-          <div
-            key={t.id}
-            className={cn(
-              "absolute inset-0",
-              !visible && "invisible pointer-events-none",
-            )}
-            aria-hidden={!visible}
-          >
-            <PreviewPane
-              ref={getRefCallback(t.id)}
-              url={t.url}
-              visible={visible}
-              onUrlChange={getUrlCallback(t.id)}
-            />
-          </div>
-        );
-      })}
+      <PreviewPane
+        key={preview.id}
+        ref={getRefCallback(preview.id)}
+        url={preview.url}
+        onUrlChange={getUrlCallback(preview.id)}
+      />
     </div>
   );
 }

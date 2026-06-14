@@ -166,6 +166,7 @@ export default function App() {
   const terminalRefs = useRef<Map<number, TerminalPaneHandle>>(new Map());
   const editorRefs = useRef<Map<number, EditorPaneHandle>>(new Map());
   const previewRefs = useRef<Map<number, PreviewPaneHandle>>(new Map());
+  const pendingPreviewFocus = useRef<Set<number>>(new Set());
   const [activeEditorHandle, setActiveEditorHandle] =
     useState<EditorPaneHandle | null>(null);
   const [gitHistoryHandle, setGitHistoryHandle] =
@@ -184,6 +185,7 @@ export default function App() {
     terminalRefs.current.clear();
     editorRefs.current.clear();
     previewRefs.current.clear();
+    pendingPreviewFocus.current.clear();
     setActiveSearchAddon(null);
     setActiveEditorHandle(null);
   }, []);
@@ -575,7 +577,13 @@ export default function App() {
       const id = newPreviewTab(url);
       // Focus the address bar if the URL is empty so the user can type.
       if (!url) {
-        setTimeout(() => previewRefs.current.get(id)?.focusAddressBar(), 0);
+        pendingPreviewFocus.current.add(id);
+        setTimeout(() => {
+          const handle = previewRefs.current.get(id);
+          if (!handle) return;
+          pendingPreviewFocus.current.delete(id);
+          handle.focusAddressBar();
+        }, 0);
       }
       return id;
     },
@@ -835,8 +843,15 @@ export default function App() {
 
   const registerPreviewHandle = useCallback(
     (id: number, h: PreviewPaneHandle | null) => {
-      if (h) previewRefs.current.set(id, h);
-      else previewRefs.current.delete(id);
+      if (h) {
+        previewRefs.current.set(id, h);
+        if (pendingPreviewFocus.current.has(id)) {
+          pendingPreviewFocus.current.delete(id);
+          h.focusAddressBar();
+        }
+      } else {
+        previewRefs.current.delete(id);
+      }
     },
     [],
   );
