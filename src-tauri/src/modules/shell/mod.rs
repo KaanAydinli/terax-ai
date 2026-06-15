@@ -14,9 +14,9 @@ use std::time::Duration;
 use serde::Serialize;
 use shared_child::SharedChild;
 
-use crate::modules::workspace::{authorize_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 #[cfg(windows)]
 use crate::modules::workspace::validate_wsl_distro_name;
+use crate::modules::workspace::{authorize_spawn_cwd, WorkspaceEnv, WorkspaceRegistry};
 
 use background::{BackgroundLogResponse, BackgroundProc, BackgroundProcInfo};
 use session::{SessionRunOutput, ShellSession};
@@ -182,6 +182,8 @@ pub fn shell_session_open(
         None => {
             if let WorkspaceEnv::Wsl { distro } = &workspace {
                 crate::modules::workspace::wsl_home(distro.clone())?
+            } else if workspace.is_ssh() {
+                crate::modules::workspace::ssh_home(workspace.clone())?
             } else {
                 crate::modules::fs::to_canon(dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
             }
@@ -210,7 +212,9 @@ pub async fn shell_session_run(
         .get(&id)
         .cloned()
         .ok_or_else(|| "no shell session".to_string())?;
-    let effective_workspace = workspace.clone().unwrap_or_else(|| session.workspace.clone());
+    let effective_workspace = workspace
+        .clone()
+        .unwrap_or_else(|| session.workspace.clone());
     authorize_spawn_cwd(&registry, cwd.as_deref(), &effective_workspace)?;
     let dur = Duration::from_secs(
         timeout_secs
@@ -286,6 +290,16 @@ pub(crate) fn build_oneshot_command(
     #[cfg_attr(not(windows), allow(unused_variables))] workspace: &WorkspaceEnv,
     #[cfg_attr(not(windows), allow(unused_variables))] cwd: Option<&str>,
 ) -> Result<Command, String> {
+    if workspace.is_ssh() {
+        let mut cmd = crate::modules::workspace::ssh_command(workspace, true)?;
+        let remote = if let Some(cwd) = cwd.filter(|s| !s.trim().is_empty()) {
+            format!("cd {} && sh -lc {}", shell_quote(cwd), shell_quote(command))
+        } else {
+            format!("sh -lc {}", shell_quote(command))
+        };
+        cmd.arg(remote);
+        return Ok(cmd);
+    }
     #[cfg(windows)]
     if let WorkspaceEnv::Wsl { distro } = workspace {
         validate_wsl_distro_name(distro)?;
@@ -329,6 +343,10 @@ pub(crate) fn build_oneshot_command(
         }
         Ok(cmd)
     }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn drain<R: Read>(reader: &mut R) -> (Vec<u8>, bool) {

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::modules::fs::file::StatKind;
 use crate::modules::git::errors::{GitError, Result};
 use crate::modules::workspace::{resolve_path, WorkspaceEnv, WorkspaceRegistry};
 
@@ -30,6 +31,19 @@ pub fn canonical_dir(
     path: &str,
     workspace: &WorkspaceEnv,
 ) -> Result<ResolvedGitDirectory> {
+    if workspace.is_ssh() {
+        let stat = crate::modules::fs::ssh::stat(workspace, path)
+            .map_err(|e| GitError::command("ssh stat", e))?;
+        if !matches!(stat.kind, StatKind::Dir) {
+            return Err(GitError::NotADirectory(path.to_string()));
+        }
+        let git_path = normalize_git_path(path);
+        return Ok(ResolvedGitDirectory {
+            workspace: workspace.clone(),
+            local_path: PathBuf::from(&git_path),
+            git_path,
+        });
+    }
     let candidate = resolve_path(path, workspace);
     if !candidate.is_dir() {
         return Err(GitError::NotADirectory(path.to_string()));
@@ -55,6 +69,9 @@ pub fn authorized_repo_root(
     workspace: &WorkspaceEnv,
 ) -> Result<ResolvedGitDirectory> {
     let canonical = canonical_dir(registry, path, workspace)?;
+    if workspace.is_ssh() {
+        return Ok(canonical);
+    }
     if !registry.is_authorized(&canonical.local_path) {
         return Err(GitError::PathOutsideWorkspace(canonical.local_path.clone()));
     }

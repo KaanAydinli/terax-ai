@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { currentWorkspaceEnv } from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
@@ -37,6 +38,8 @@ export function dirname(path: string): string {
 }
 
 const EXPANSION_CACHE_LIMIT = 8;
+const SSH_AUTH_RETRY_MS = 800;
+const SSH_AUTH_RETRY_WINDOW_MS = 30_000;
 const expansionCache = new Map<string, string[]>();
 
 function rememberExpansion(root: string, expanded: Set<string>): void {
@@ -96,6 +99,10 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const expandedRef = useRef(expanded);
   const nodesRef = useRef(nodes);
   const watchedRef = useRef<Set<string>>(new Set());
+  const retryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  const retryUntilRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     showHiddenRef.current = showHidden;
@@ -128,13 +135,20 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     if (nodesRef.current[path]?.status !== "loaded") {
       setNodes((s) => ({ ...s, [path]: { status: "loading" } }));
     }
+    const workspace = currentWorkspaceEnv();
     try {
       const entries = await invoke<DirEntry[]>("fs_read_dir", {
         path,
         showHidden: showHiddenRef.current,
         gitDecorations: gitDecorationsRef.current,
-        workspace: currentWorkspaceEnv(),
+        workspace,
       });
+      retryUntilRef.current.delete(path);
+      const retryTimer = retryTimersRef.current.get(path);
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimersRef.current.delete(path);
+      }
 
       const prev = nodesRef.current[path];
       if (prev?.status === "loaded" && sameDirListing(prev.entries, entries)) {
@@ -179,9 +193,32 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         watchRemove(toUnwatch);
       }
     } catch (e) {
+      const message = String(e);
+      if (workspace.kind === "ssh" && isPendingSshAuthError(message)) {
+        const now = Date.now();
+        const until =
+          retryUntilRef.current.get(path) ?? now + SSH_AUTH_RETRY_WINDOW_MS;
+        retryUntilRef.current.set(path, until);
+        if (now < until) {
+          setNodes((s) =>
+            s[path]?.status === "loaded"
+              ? s
+              : { ...s, [path]: { status: "loading" } },
+          );
+          if (!retryTimersRef.current.has(path)) {
+            const timer = setTimeout(() => {
+              retryTimersRef.current.delete(path);
+              void fetchChildren(path);
+            }, SSH_AUTH_RETRY_MS);
+            retryTimersRef.current.set(path, timer);
+          }
+          return;
+        }
+        retryUntilRef.current.delete(path);
+      }
       setNodes((s) => ({
         ...s,
-        [path]: { status: "error", message: String(e) },
+        [path]: { status: "error", message },
       }));
     }
   }, []);
@@ -211,6 +248,9 @@ export function useFileTree(rootPath: string | null, options?: Options) {
 
     return () => {
       rememberExpansion(rootPath, expandedRef.current);
+      for (const timer of retryTimersRef.current.values()) clearTimeout(timer);
+      retryTimersRef.current.clear();
+      retryUntilRef.current.clear();
       if (watchedRef.current.size > 0) {
         watchRemove([...watchedRef.current]);
         watchedRef.current.clear();
@@ -227,13 +267,35 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       for (const p of paths) {
         const parent = dirname(p);
         if (current[parent]?.status === "loaded") dirs.add(parent);
-        if (current[p]?.status === "loaded") dirs.add(p);
+        if (current[p]) dirs.add(p);
       }
       for (const d of dirs) void fetchChildren(d);
     }).then((un) => {
       if (alive) unlisten = un;
       else un();
     });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [fetchChildren]);
+
+  useEffect(() => {
+    type FileWrittenPayload = { path: string; source?: string };
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWebviewWindow()
+      .listen<FileWrittenPayload>("fs:file-written", (event) => {
+        const path = event.payload.path.replace(/\\/g, "/");
+        const parent = dirname(path);
+        if (nodesRef.current[parent]?.status === "loaded") {
+          void fetchChildren(parent);
+        }
+      })
+      .then((un) => {
+        if (alive) unlisten = un;
+        else un();
+      });
     return () => {
       alive = false;
       unlisten?.();
@@ -438,4 +500,13 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     movePath,
     joinPath,
   };
+}
+
+function isPendingSshAuthError(message: string): boolean {
+  return (
+    /permission denied/i.test(message) ||
+    /publickey/i.test(message) ||
+    /keyboard-interactive/i.test(message) ||
+    /password/i.test(message)
+  );
 }

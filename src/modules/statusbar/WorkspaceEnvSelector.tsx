@@ -8,6 +8,7 @@ import {
 import { IS_WINDOWS } from "@/lib/platform";
 import {
   LOCAL_WORKSPACE,
+  sshLabel,
   useWorkspaceEnvStore,
   type WorkspaceEnv,
 } from "@/modules/workspace";
@@ -19,8 +20,6 @@ type Props = {
 };
 
 export function WorkspaceEnvSelector({ onSelect }: Props) {
-  if (!IS_WINDOWS) return null;
-
   const env = useWorkspaceEnvStore((s) => s.env);
   const distros = useWorkspaceEnvStore((s) => s.distros);
   const loading = useWorkspaceEnvStore((s) => s.loading);
@@ -33,7 +32,14 @@ export function WorkspaceEnvSelector({ onSelect }: Props) {
     }
   };
 
-  const label = env.kind === "wsl" ? `WSL: ${env.distro}` : "Windows";
+  const label =
+    env.kind === "wsl"
+      ? `WSL: ${env.distro}`
+      : env.kind === "ssh"
+        ? `SSH: ${sshLabel(env)}`
+        : IS_WINDOWS
+          ? "Windows"
+          : "Local";
 
   return (
     <DropdownMenu onOpenChange={handleOpenChange}>
@@ -53,32 +59,40 @@ export function WorkspaceEnvSelector({ onSelect }: Props) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-48">
         <DropdownMenuItem onSelect={() => onSelect(LOCAL_WORKSPACE)}>
-          Windows Local
+          {IS_WINDOWS ? "Windows Local" : "Local"}
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        {distros.length === 0 ? (
-          <DropdownMenuItem disabled>
-            {loading
-              ? "Loading WSL distros..."
-              : error
-                ? "WSL unavailable"
-                : "No WSL distros found"}
-          </DropdownMenuItem>
-        ) : (
-          distros.map((distro) => (
-            <DropdownMenuItem
-              key={distro.name}
-              onSelect={() => onSelect({ kind: "wsl", distro: distro.name })}
-            >
-              WSL: {distro.name}
+        {IS_WINDOWS ? (
+          <>
+            <DropdownMenuSeparator />
+            {distros.length === 0 ? (
+              <DropdownMenuItem disabled>
+                {loading
+                  ? "Loading WSL distros..."
+                  : error
+                    ? "WSL unavailable"
+                    : "No WSL distros found"}
+              </DropdownMenuItem>
+            ) : (
+              distros.map((distro) => (
+                <DropdownMenuItem
+                  key={distro.name}
+                  onSelect={() => onSelect({ kind: "wsl", distro: distro.name })}
+                >
+                  WSL: {distro.name}
+                </DropdownMenuItem>
+              ))
+            )}
+          </>
+        ) : null}
+        {IS_WINDOWS ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => void refreshDistros()}>
+              <HugeiconsIcon icon={Refresh01Icon} size={13} strokeWidth={1.75} />
+              Refresh WSL
             </DropdownMenuItem>
-          ))
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void refreshDistros()}>
-          <HugeiconsIcon icon={Refresh01Icon} size={13} strokeWidth={1.75} />
-          Refresh
-        </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

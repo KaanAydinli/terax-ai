@@ -55,6 +55,9 @@ pub fn build_command(
     workspace: WorkspaceEnv,
     blocks: bool,
 ) -> Result<CommandBuilder, String> {
+    if workspace.is_ssh() {
+        return build_ssh_command(cwd, workspace, blocks);
+    }
     #[cfg(unix)]
     {
         let _ = workspace;
@@ -64,6 +67,41 @@ pub fn build_command(
     {
         windows::build(cwd, workspace, blocks)
     }
+}
+
+fn build_ssh_command(
+    cwd: Option<String>,
+    workspace: WorkspaceEnv,
+    blocks: bool,
+) -> Result<CommandBuilder, String> {
+    let mut cmd = CommandBuilder::new("ssh");
+    if let WorkspaceEnv::Ssh { port, .. } = &workspace {
+        cmd.arg("-tt");
+        if let Some(port) = port {
+            cmd.arg("-p");
+            cmd.arg(port.to_string());
+        }
+    }
+    cmd.arg(crate::modules::workspace::ssh_target(&workspace)?);
+    let remote_cwd = cwd
+        .filter(|p| !p.trim().is_empty())
+        .or_else(|| workspace.ssh_root().map(str::to_string));
+    let shell = if blocks {
+        "TERAX_TERMINAL=1 TERAX_BLOCKS=1 exec ${SHELL:-/bin/bash} -l"
+    } else {
+        "TERAX_TERMINAL=1 exec ${SHELL:-/bin/bash} -l"
+    };
+    let remote = if let Some(cwd) = remote_cwd {
+        format!("cd {} && {shell}", shell_quote(&cwd))
+    } else {
+        shell.to_string()
+    };
+    cmd.arg(remote);
+    Ok(cmd)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub fn detect_shell_name() -> String {
@@ -340,7 +378,9 @@ mod windows {
             zdotdir: String,
             user_zdotdir: Option<String>,
         },
-        Bash { rcfile: String },
+        Bash {
+            rcfile: String,
+        },
         Fish,
         None,
     }

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -77,6 +78,12 @@ pub fn authorize_spawn_cwd(
     cwd: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<Option<PathBuf>, String> {
+    if workspace.is_ssh() {
+        return Ok(cwd
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from));
+    }
     let Some(cwd) = cwd.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
@@ -102,6 +109,12 @@ pub fn authorize_user_spawn_cwd(
     cwd: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<Option<PathBuf>, String> {
+    if workspace.is_ssh() {
+        return Ok(cwd
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from));
+    }
     let Some(cwd) = cwd.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
@@ -129,6 +142,9 @@ pub async fn workspace_authorize(
     registry: tauri::State<'_, WorkspaceRegistry>,
 ) -> Result<String, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        return Ok(normalize_remote_path(&path));
+    }
     let resolved = resolve_path(&path, &workspace);
     let canonical = registry.authorize(&resolved).map_err(|e| e.to_string())?;
     Ok(crate::modules::fs::to_canon(&canonical))
@@ -299,6 +315,15 @@ pub enum WorkspaceEnv {
     Wsl {
         distro: String,
     },
+    Ssh {
+        host: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        port: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root: Option<String>,
+    },
 }
 
 impl WorkspaceEnv {
@@ -308,6 +333,137 @@ impl WorkspaceEnv {
 
     pub fn is_wsl(&self) -> bool {
         matches!(self, Self::Wsl { .. })
+    }
+
+    pub fn is_ssh(&self) -> bool {
+        matches!(self, Self::Ssh { .. })
+    }
+
+    pub fn ssh_root(&self) -> Option<&str> {
+        match self {
+            Self::Ssh { root, .. } => root.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+fn safe_ssh_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(
+                    c,
+                    '"' | '\'' | '`' | '$' | ';' | '&' | '|' | '<' | '>' | '(' | ')'
+                )
+        })
+}
+
+fn normalize_remote_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return "/".into();
+    }
+    let mut out = trimmed.replace('\\', "/");
+    while out.len() > 1 && out.ends_with('/') {
+        out.pop();
+    }
+    if out.starts_with('/') {
+        out
+    } else {
+        format!("/{out}")
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+const SSH_CONTROL_PATH: &str = "/tmp/terax-ssh-%C";
+
+pub(crate) fn ssh_target(workspace: &WorkspaceEnv) -> Result<String, String> {
+    let WorkspaceEnv::Ssh { host, user, .. } = workspace else {
+        return Err("workspace is not SSH".into());
+    };
+    if !safe_ssh_component(host) {
+        return Err("invalid SSH host".into());
+    }
+    if let Some(user) = user.as_deref() {
+        if !safe_ssh_component(user) {
+            return Err("invalid SSH user".into());
+        }
+        Ok(format!("{user}@{host}"))
+    } else {
+        Ok(host.clone())
+    }
+}
+
+pub(crate) fn ssh_command(workspace: &WorkspaceEnv, batch_mode: bool) -> Result<Command, String> {
+    let WorkspaceEnv::Ssh { port, .. } = workspace else {
+        return Err("workspace is not SSH".into());
+    };
+    let target = ssh_target(workspace)?;
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-o").arg("ConnectTimeout=10");
+    cmd.arg("-o").arg("ControlMaster=auto");
+    cmd.arg("-o").arg("ControlPersist=1h");
+    cmd.arg("-o").arg(format!("ControlPath={SSH_CONTROL_PATH}"));
+    if batch_mode {
+        cmd.arg("-o").arg("BatchMode=yes");
+    }
+    if let Some(port) = port {
+        cmd.arg("-p").arg(port.to_string());
+    }
+    cmd.arg(target);
+    Ok(cmd)
+}
+
+fn ssh_config_user(workspace: &WorkspaceEnv) -> Result<Option<String>, String> {
+    let WorkspaceEnv::Ssh { port, user, .. } = workspace else {
+        return Err("workspace is not SSH".into());
+    };
+    if let Some(user) = user.as_deref() {
+        if safe_ssh_component(user) {
+            return Ok(Some(user.to_string()));
+        }
+    }
+    let target = ssh_target(workspace)?;
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-G");
+    if let Some(port) = port {
+        cmd.arg("-p").arg(port.to_string());
+    }
+    cmd.arg(target);
+    crate::modules::proc::hide_console(&mut cmd);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(stdout.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed
+            .strip_prefix("user ")
+            .or_else(|| trimmed.strip_prefix("User "))?
+            .trim();
+        if safe_ssh_component(value) {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    }))
+}
+
+fn linux_home_for_user(user: Option<String>) -> String {
+    match user.as_deref() {
+        Some("root") => "/root".into(),
+        Some(user) if safe_ssh_component(user) => format!("/home/{user}"),
+        _ => std::env::var("USER")
+            .ok()
+            .filter(|user| safe_ssh_component(user))
+            .map(|user| format!("/home/{user}"))
+            .unwrap_or_else(|| "/".into()),
     }
 }
 
@@ -323,6 +479,7 @@ pub fn resolve_path(path: &str, workspace: &WorkspaceEnv) -> PathBuf {
     match workspace {
         WorkspaceEnv::Local => PathBuf::from(path),
         WorkspaceEnv::Wsl { distro } => wsl_path_to_host(distro, path),
+        WorkspaceEnv::Ssh { .. } => PathBuf::from(path),
     }
 }
 
@@ -575,6 +732,63 @@ pub fn wsl_home(distro: String) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+pub fn ssh_home(workspace: WorkspaceEnv) -> Result<String, String> {
+    let root = workspace.ssh_root().map(normalize_remote_path);
+    if let Some(root) = root {
+        if !root.is_empty() {
+            let mut cmd = ssh_command(&workspace, true)?;
+            cmd.arg(format!(
+                "test -d {} && printf %s {}",
+                shell_quote(&root),
+                shell_quote(&root)
+            ));
+            crate::modules::proc::hide_console(&mut cmd);
+            let out = cmd.output().map_err(|e| e.to_string())?;
+            if out.status.success() {
+                return Ok(root);
+            }
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("SSH root is not a directory: {root}")
+            } else {
+                stderr
+            });
+        }
+    }
+    let mut cmd = ssh_command(&workspace, true)?;
+    cmd.arg("sh").arg("-lc").arg("printf %s \"$HOME\"");
+    crate::modules::proc::hide_console(&mut cmd);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "ssh home lookup failed".into()
+        } else {
+            stderr
+        });
+    }
+    let home = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if home.is_empty() {
+        Err("could not resolve SSH home".into())
+    } else {
+        Ok(normalize_remote_path(&home))
+    }
+}
+
+#[tauri::command]
+pub fn ssh_default_root(workspace: WorkspaceEnv) -> Result<String, String> {
+    let WorkspaceEnv::Ssh { root, .. } = &workspace else {
+        return Err("workspace is not SSH".into());
+    };
+    if let Some(root) = root.as_deref().map(normalize_remote_path) {
+        if !root.is_empty() {
+            return Ok(root);
+        }
+    }
+    Ok(linux_home_for_user(ssh_config_user(&workspace)?))
+}
+
 #[cfg(windows)]
 pub fn wsl_login_shell(distro: String) -> Result<String, String> {
     const SCRIPT: &str = r#"uid="$(id -u 2>/dev/null || printf '')"
@@ -735,6 +949,43 @@ mod auth_tests {
         assert!(authorize_spawn_cwd(&reg, Some("   "), &WorkspaceEnv::Local)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn ssh_target_formats_user_host_portless() {
+        let env = WorkspaceEnv::Ssh {
+            host: "ubuntu-box".into(),
+            user: Some("kaan".into()),
+            port: None,
+            root: Some("/home/kaan/project".into()),
+        };
+        assert_eq!(ssh_target(&env).unwrap(), "kaan@ubuntu-box");
+    }
+
+    #[test]
+    fn ssh_target_rejects_shell_metacharacters() {
+        let env = WorkspaceEnv::Ssh {
+            host: "host;rm".into(),
+            user: Some("kaan".into()),
+            port: None,
+            root: None,
+        };
+        assert!(ssh_target(&env).is_err());
+    }
+
+    #[test]
+    fn ssh_authorize_spawn_cwd_does_not_touch_local_filesystem() {
+        let reg = WorkspaceRegistry::default();
+        let env = WorkspaceEnv::Ssh {
+            host: "ubuntu-box".into(),
+            user: Some("kaan".into()),
+            port: Some(22),
+            root: None,
+        };
+        let resolved = authorize_spawn_cwd(&reg, Some("/remote/path"), &env)
+            .expect("ssh cwd accepted")
+            .expect("cwd returned");
+        assert_eq!(resolved, PathBuf::from("/remote/path"));
     }
 
     #[test]

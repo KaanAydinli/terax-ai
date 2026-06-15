@@ -68,6 +68,14 @@ if [[ -z "$__TERAX_HOOKS_LOADED" ]]; then
     printf '\e]133;C;%s\e\\' "${cmd[1,256]}"
   }
 
+  ssh() {
+    command ssh \
+      -o ControlMaster=auto \
+      -o ControlPersist=1h \
+      -o ControlPath=/tmp/terax-ssh-%C \
+      "$@"
+  }
+
   if (( $+functions[add-zsh-hook] )); then
     add-zsh-hook precmd _terax_precmd
     add-zsh-hook preexec _terax_preexec

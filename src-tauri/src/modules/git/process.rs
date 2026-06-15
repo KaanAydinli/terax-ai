@@ -15,9 +15,9 @@ use crate::modules::git::types::{
     GitOutput, TextSource, DEFAULT_TIMEOUT_SECS, MAX_FILE_BYTES, MAX_OUTPUT_BYTES,
     MAX_TIMEOUT_SECS, MIN_GIT_VERSION,
 };
-use crate::modules::workspace::WorkspaceEnv;
 #[cfg(windows)]
 use crate::modules::workspace::validate_wsl_distro_name;
+use crate::modules::workspace::WorkspaceEnv;
 
 #[derive(Clone)]
 enum Availability {
@@ -47,6 +47,14 @@ fn workspace_cache_key(workspace: &WorkspaceEnv) -> String {
     match workspace {
         WorkspaceEnv::Local => "local".into(),
         WorkspaceEnv::Wsl { distro } => format!("wsl:{distro}"),
+        WorkspaceEnv::Ssh {
+            host, user, port, ..
+        } => format!(
+            "ssh:{}{}{}",
+            user.as_deref().map(|u| format!("{u}@")).unwrap_or_default(),
+            host,
+            port.map(|p| format!(":{p}")).unwrap_or_default()
+        ),
     }
 }
 
@@ -309,6 +317,23 @@ fn build_git_command(
     cwd: Option<&str>,
     args: &[OsString],
 ) -> Result<Command> {
+    if _workspace.is_ssh() {
+        let mut cmd = crate::modules::workspace::ssh_command(_workspace, true)
+            .map_err(|e| GitError::command("ssh", e))?;
+        let mut remote = String::new();
+        if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
+            remote.push_str("cd ");
+            remote.push_str(&shell_quote(cwd));
+            remote.push_str(" && ");
+        }
+        remote.push_str("git");
+        for arg in args {
+            remote.push(' ');
+            remote.push_str(&shell_quote(&arg.to_string_lossy()));
+        }
+        cmd.arg(remote);
+        return Ok(cmd);
+    }
     #[cfg(windows)]
     if let WorkspaceEnv::Wsl { distro } = _workspace {
         validate_wsl_distro_name(distro)
@@ -329,6 +354,10 @@ fn build_git_command(
         cmd.current_dir(Path::new(dir));
     }
     Ok(cmd)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub fn ensure_success(output: &GitOutput, context: &'static str) -> Result<()> {
