@@ -26,9 +26,7 @@ const OPTIONS_WITH_VALUE = new Set([
   "-w",
 ]);
 
-export function parseSshWorkspaceFromCommand(
-  command: string,
-): SshEnv | null {
+export function parseSshWorkspaceFromCommand(command: string): SshEnv | null {
   const tokens = tokenizeShell(command.trim());
   if (tokens.length < 2) return null;
   let idx = 0;
@@ -98,7 +96,7 @@ function hasUnsafeSshComponent(value: string): boolean {
   return /[\s"'`$;&|<>()\u0000-\u001f\u007f]/.test(value);
 }
 
-function tokenizeShell(input: string): string[] {
+export function tokenizeShell(input: string): string[] {
   const out: string[] = [];
   let current = "";
   let quote: "'" | '"' | null = null;

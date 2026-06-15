@@ -25,9 +25,8 @@ import {
   registerPromptTracker,
 } from "./osc-handlers";
 import { openPty, type PtySession } from "./pty-bridge";
-import {
-  parseSshWorkspaceFromCommand,
-} from "./sshCommand";
+import { remoteCwdFromCommand } from "./remoteCwd";
+import { parseSshWorkspaceFromCommand } from "./sshCommand";
 import "../block/block.css";
 import { ensureAgentActivityListener, isAgentActivePty } from "./agentActivity";
 import {
@@ -108,10 +107,19 @@ type Session = {
   autoSsh: {
     env: SshEnv;
     previousCwd: string | null;
+    remoteHome: string | null;
+    trackingReady: boolean;
+    cwdCheckSeq: number;
+    previousRemoteCwd: string | null;
   } | null;
 };
 
 type SshEnv = Extract<WorkspaceEnv, { kind: "ssh" }>;
+type FileStat = {
+  kind: "file" | "dir" | "symlink";
+  size: number;
+  mtime: number;
+};
 
 const sessions = new Map<number, Session>();
 let activeWorkspaceLeafId: number | null = null;
@@ -167,8 +175,11 @@ export function submitToLeaf(leafId: number, text: string): void {
   const s = sessions.get(leafId);
   if (!s?.pty) return;
   s.everSubmitted = true;
-  const env = s.autoSsh ? null : parseSshWorkspaceFromCommand(text);
-  if (env) void activateSshWorkspace(leafId, s, env);
+  if (s.autoSsh) trackRemoteSshCommand(leafId, s, text);
+  else {
+    const env = parseSshWorkspaceFromCommand(text);
+    if (env) void activateSshWorkspace(leafId, s, env);
+  }
   // Bracketed paste keeps a multiline command atomic; trailing CR runs it.
   if (text.includes("\n")) s.pty.write(`\x1b[200~${text}\x1b[201~\r`);
   else s.pty.write(`${text}\r`);
@@ -274,7 +285,7 @@ export function blockWatermarkState(leafId: number): WatermarkState {
 
 /**
  * Clear the scrollback and screen of the currently focused terminal, keeping
- * the active prompt line — macOS Terminal's ⌘K behaviour. Returns false when no
+ * the active prompt line. Matches macOS Terminal's Cmd+K behavior. Returns false when no
  * focused terminal slot is bound (e.g. focus is in the editor or AI panel).
  */
 export function clearFocusedTerminal(): boolean {
@@ -301,17 +312,77 @@ function leafBusy(s: Session): boolean {
 
 const MAX_TRACKED_INPUT_LINE = 4096;
 
-function prepareTerminalWrite(leafId: number, s: Session, data: string): string {
-  if (s.autoSsh) return data;
-  const command = data === "\r" || data === "\n" ? s.inputLine.trim() : "";
-  const env = command ? parseSshWorkspaceFromCommand(command) : null;
-  captureTerminalInput(s, data);
-  if (!env) return data;
-  void activateSshWorkspace(leafId, s, env);
+function prepareTerminalWrite(
+  leafId: number,
+  s: Session,
+  data: string,
+): string {
+  if (s.autoSsh) {
+    captureRemoteSshInput(leafId, s, data);
+    return data;
+  }
+  const commands = captureTerminalInput(s, data);
+  for (const command of commands) {
+    const env = parseSshWorkspaceFromCommand(command);
+    if (env) void activateSshWorkspace(leafId, s, env);
+  }
   return data;
 }
 
-function captureTerminalInput(s: Session, data: string): void {
+function captureRemoteSshInput(leafId: number, s: Session, data: string): void {
+  if (!s.autoSsh?.trackingReady) return;
+  const commands = captureTerminalInput(s, data);
+  for (const command of commands) trackRemoteSshCommand(leafId, s, command);
+}
+
+function trackRemoteSshCommand(
+  leafId: number,
+  s: Session,
+  command: string,
+): void {
+  const auto = s.autoSsh;
+  if (!auto?.trackingReady) return;
+  const change = remoteCwdFromCommand(command, {
+    current: s.lastCwd,
+    home: auto.remoteHome,
+    previous: auto.previousRemoteCwd,
+  });
+  if (!change) return;
+  void validateAndApplyRemoteCwd(leafId, s, auto, change.cwd, change.previous);
+}
+
+async function validateAndApplyRemoteCwd(
+  leafId: number,
+  s: Session,
+  auto: NonNullable<Session["autoSsh"]>,
+  cwd: string,
+  previous: string | null,
+): Promise<void> {
+  const seq = ++auto.cwdCheckSeq;
+  try {
+    const stat = await invoke<FileStat>("fs_stat", {
+      path: cwd,
+      workspace: auto.env,
+    });
+    if (
+      stat.kind !== "dir" ||
+      s.disposed ||
+      sessions.get(leafId) !== s ||
+      s.autoSsh !== auto ||
+      auto.cwdCheckSeq !== seq
+    ) {
+      return;
+    }
+    auto.previousRemoteCwd = previous;
+    s.lastCwd = cwd;
+    s.callbacks.onCwd?.(cwd);
+  } catch {
+    // A failed `cd` leaves the remote shell where it was; keep the sidebar there too.
+  }
+}
+
+function captureTerminalInput(s: Session, data: string): string[] {
+  const commands: string[] = [];
   let escapeState: "prefix" | "csi" | "osc" | "oscEsc" | null = null;
   for (const ch of data) {
     if (escapeState) {
@@ -323,6 +394,8 @@ function captureTerminalInput(s: Session, data: string): void {
       continue;
     }
     if (ch === "\r" || ch === "\n") {
+      const command = s.inputLine.trim();
+      if (command) commands.push(command);
       s.inputLine = "";
       continue;
     }
@@ -338,6 +411,7 @@ function captureTerminalInput(s: Session, data: string): void {
       s.inputLine = `${s.inputLine}${ch}`.slice(-MAX_TRACKED_INPUT_LINE);
     }
   }
+  return commands;
 }
 
 function nextEscapeState(
@@ -395,7 +469,14 @@ async function activateSshWorkspace(
 ): Promise<void> {
   if (s.autoSsh && sameWorkspace(s.autoSsh.env, env)) return;
   const previousCwd = s.lastCwd ?? s.initialCwd ?? null;
-  const marker = { env, previousCwd };
+  const marker: NonNullable<Session["autoSsh"]> = {
+    env,
+    previousCwd,
+    remoteHome: null,
+    trackingReady: false,
+    cwdCheckSeq: 0,
+    previousRemoteCwd: null,
+  };
   s.autoSsh = marker;
 
   try {
@@ -405,6 +486,7 @@ async function activateSshWorkspace(
     }
     const envWithRoot = { ...env, root };
     marker.env = envWithRoot;
+    marker.remoteHome = root;
     applyWorkspaceEnvForLeaf(leafId, s);
     s.lastCwd = root;
     s.callbacks.onCwd?.(root);
@@ -432,10 +514,12 @@ async function refreshWhenSshReady(
       return;
     }
     try {
-      await getSshHome(env);
+      const home = await getSshHome(env);
       if (s.disposed || sessions.get(leafId) !== s || s.autoSsh !== marker) {
         return;
       }
+      marker.remoteHome = home;
+      marker.trackingReady = true;
       await getCurrentWebviewWindow().emit("fs:changed", { paths: [root] });
       return;
     } catch {
@@ -791,7 +875,7 @@ function bindLeafToSlot(leafId: number, s: Session): void {
           },
         ];
       }
-      // Shared in-command flag — see osc-handlers.ts. The prompt tracker
+      // Shared in-command flag. See osc-handlers.ts. The prompt tracker
       // flips it on OSC 133 B/C/D/A; the cwd handler reads it to ignore OSC
       // 7 emitted by untrusted command output (remote SSH, `cat` of an
       // attacker file, etc.).
@@ -804,10 +888,12 @@ function bindLeafToSlot(leafId: number, s: Session): void {
         (next) => {
           markSessionReady(leafId);
           if (s.lastCwd === next) return;
+          if (s.autoSsh) s.autoSsh.previousRemoteCwd = s.lastCwd;
           s.lastCwd = next;
           s.callbacks.onCwd?.(next);
         },
         shellState,
+        { allowDuringCommand: () => s.autoSsh !== null },
       );
       return [prompt.dispose, cwd];
     },
