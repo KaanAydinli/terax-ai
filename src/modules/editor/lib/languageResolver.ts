@@ -62,6 +62,7 @@ const loaders: Record<string, LanguageLoader> = {
   json: jsonLoader,
   jsonc: jsonLoader,
   json5: jsonLoader,
+  jsonl: jsonLoader,
 
   sql: sqlLoader,
   psql: pgsqlLoader,

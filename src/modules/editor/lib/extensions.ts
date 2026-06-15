@@ -33,10 +33,16 @@ export function buildSharedExtensions(): Extension[] {
         fontSize: "calc(13px * var(--app-zoom, 1))",
         lineHeight: "1.55",
         backgroundColor: "transparent !important",
+        overflowX: "auto",
+        overflowY: "auto",
       },
       ".cm-content": {
         caretColor: "var(--foreground)",
         backgroundColor: "transparent !important",
+        minWidth: "max-content",
+      },
+      ".cm-line": {
+        paddingRight: "24px",
       },
       ".cm-gutters": {
         backgroundColor: "transparent !important",
