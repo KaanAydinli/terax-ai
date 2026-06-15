@@ -3,6 +3,7 @@ import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   getSshDefaultRoot,
   getSshHome,
+  LOCAL_WORKSPACE,
   useWorkspaceEnvStore,
   workspaceScopeKey,
   type WorkspaceEnv,
@@ -103,9 +104,9 @@ type Session = {
   hiddenReleaseTimer: ReturnType<typeof setTimeout> | null;
   spawnFailed: boolean;
   inputLine: string;
+  baseEnv: WorkspaceEnv;
   autoSsh: {
     env: SshEnv;
-    previousEnv: WorkspaceEnv;
     previousCwd: string | null;
   } | null;
 };
@@ -113,6 +114,7 @@ type Session = {
 type SshEnv = Extract<WorkspaceEnv, { kind: "ssh" }>;
 
 const sessions = new Map<number, Session>();
+let activeWorkspaceLeafId: number | null = null;
 
 // Block-overlay viewport listeners, keyed by leafId at module scope so the
 // overlay (a child) can subscribe before the parent effect creates the session.
@@ -362,16 +364,38 @@ function sameWorkspace(a: WorkspaceEnv, b: WorkspaceEnv): boolean {
   return (a.root ?? null) === (b.root ?? null);
 }
 
+function sessionWorkspaceEnv(s: Session): WorkspaceEnv {
+  return s.autoSsh?.env ?? s.baseEnv;
+}
+
+function normalizePtyBaseEnv(env: WorkspaceEnv): WorkspaceEnv {
+  return env.kind === "ssh" ? LOCAL_WORKSPACE : env;
+}
+
+function applyWorkspaceEnvForLeaf(leafId: number, s: Session): void {
+  if (activeWorkspaceLeafId !== leafId) return;
+  const next = sessionWorkspaceEnv(s);
+  const store = useWorkspaceEnvStore.getState();
+  if (!sameWorkspace(store.env, next)) {
+    store.setEnv(next.kind === "local" ? LOCAL_WORKSPACE : next);
+  }
+}
+
+export function setActiveTerminalWorkspaceLeaf(leafId: number | null): void {
+  activeWorkspaceLeafId = leafId;
+  if (leafId === null) return;
+  const s = sessions.get(leafId);
+  if (s) applyWorkspaceEnvForLeaf(leafId, s);
+}
+
 async function activateSshWorkspace(
   leafId: number,
   s: Session,
   env: SshEnv,
 ): Promise<void> {
   if (s.autoSsh && sameWorkspace(s.autoSsh.env, env)) return;
-  const store = useWorkspaceEnvStore.getState();
-  const previousEnv = store.env;
   const previousCwd = s.lastCwd ?? s.initialCwd ?? null;
-  const marker = { env, previousEnv, previousCwd };
+  const marker = { env, previousCwd };
   s.autoSsh = marker;
 
   try {
@@ -381,14 +405,14 @@ async function activateSshWorkspace(
     }
     const envWithRoot = { ...env, root };
     marker.env = envWithRoot;
-    useWorkspaceEnvStore.getState().setEnv(envWithRoot);
+    applyWorkspaceEnvForLeaf(leafId, s);
     s.lastCwd = root;
     s.callbacks.onCwd?.(root);
     void refreshWhenSshReady(leafId, s, marker, envWithRoot, root);
   } catch (e) {
     if (s.autoSsh === marker) {
       s.autoSsh = null;
-      useWorkspaceEnvStore.getState().setEnv(previousEnv);
+      applyWorkspaceEnvForLeaf(leafId, s);
     }
     console.warn("[terax] failed to activate SSH workspace:", e);
   }
@@ -420,12 +444,11 @@ async function refreshWhenSshReady(
   }
 }
 
-function restoreAutoSshWorkspace(s: Session): void {
+function restoreAutoSshWorkspace(leafId: number, s: Session): void {
   const auto = s.autoSsh;
   if (!auto) return;
   s.autoSsh = null;
-  const store = useWorkspaceEnvStore.getState();
-  if (sameWorkspace(store.env, auto.env)) store.setEnv(auto.previousEnv);
+  applyWorkspaceEnvForLeaf(leafId, s);
   if (auto.previousCwd !== null) {
     s.lastCwd = auto.previousCwd;
     s.callbacks.onCwd?.(auto.previousCwd);
@@ -477,7 +500,7 @@ function onLeafCommandState(leafId: number, running: boolean): void {
   if (!s || s.commandRunning === running) return;
   s.commandRunning = running;
   if (!running) {
-    restoreAutoSshWorkspace(s);
+    restoreAutoSshWorkspace(leafId, s);
     scheduleHiddenRelease(leafId, s);
     return;
   }
@@ -603,9 +626,11 @@ function ensureSession(
     hiddenReleaseTimer: null,
     spawnFailed: false,
     inputLine: "",
+    baseEnv: normalizePtyBaseEnv(useWorkspaceEnvStore.getState().env),
     autoSsh: null,
   };
   sessions.set(leafId, session);
+  applyWorkspaceEnvForLeaf(leafId, session);
 
   session.ready = (async () => {
     await ensureMonoFontsLoaded();
@@ -673,7 +698,7 @@ async function openPtyForSession(
     {
       onData: (bytes) => deliverPtyBytes(leafId, bytes),
       onExit: (code) => {
-        restoreAutoSshWorkspace(s);
+        restoreAutoSshWorkspace(leafId, s);
         s.shellExited = true;
         s.pty = null;
         s.commandRunning = false;
@@ -684,6 +709,7 @@ async function openPtyForSession(
         else s.pendingExit = code;
       },
     },
+    s.baseEnv,
     cwd,
     s.blocks,
   );
@@ -856,7 +882,7 @@ export async function respawnSession(
   s.pty = null;
   s.snapshot = null;
   s.dormantRing = new DormantRing();
-  restoreAutoSshWorkspace(s);
+  restoreAutoSshWorkspace(leafId, s);
   s.shellExited = false;
   s.pendingExit = null;
   s.altScreenAtRelease = false;
@@ -915,7 +941,7 @@ export function disposeSession(leafId: number): void {
   if (!s) return;
   s.disposed = true;
   cancelHiddenRelease(s);
-  restoreAutoSshWorkspace(s);
+  restoreAutoSshWorkspace(leafId, s);
   disposeLeafSlot(leafId);
   s.hasSlot = false;
   s.snapshot = null;

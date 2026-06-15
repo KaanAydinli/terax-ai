@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import {
+  useWorkspaceEnvStore,
+  workspaceScopeKey,
+} from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
 
@@ -60,6 +63,10 @@ function recallExpansion(root: string): string[] {
   return v;
 }
 
+function expansionKey(workspaceKey: string, root: string): string {
+  return `${workspaceKey}|${root}`;
+}
+
 function isUnder(key: string, root: string): boolean {
   return key === root || key.startsWith(`${root}/`);
 }
@@ -85,6 +92,8 @@ type Options = {
 };
 
 export function useFileTree(rootPath: string | null, options?: Options) {
+  const workspace = useWorkspaceEnvStore((s) => s.env);
+  const workspaceKey = workspaceScopeKey(workspace);
   const showHidden = usePreferencesStore((s) => s.showHidden);
   const showHiddenRef = useRef(showHidden);
   const gitDecorations = usePreferencesStore((s) => s.explorerGitDecorations);
@@ -103,6 +112,8 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     new Map(),
   );
   const retryUntilRef = useRef<Map<string, number>>(new Map());
+  const workspaceKeyRef = useRef(workspaceKey);
+  workspaceKeyRef.current = workspaceKey;
 
   useEffect(() => {
     showHiddenRef.current = showHidden;
@@ -123,19 +134,19 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   const addWatch = useCallback((path: string) => {
     if (watchedRef.current.has(path)) return;
     watchedRef.current.add(path);
-    watchAdd([path]);
-  }, []);
+    watchAdd([path], workspace);
+  }, [workspace]);
 
   const removeWatch = useCallback((path: string) => {
     if (!watchedRef.current.delete(path)) return;
-    watchRemove([path]);
-  }, []);
+    watchRemove([path], workspace);
+  }, [workspace]);
 
   const fetchChildren = useCallback(async (path: string) => {
     if (nodesRef.current[path]?.status !== "loaded") {
       setNodes((s) => ({ ...s, [path]: { status: "loading" } }));
     }
-    const workspace = currentWorkspaceEnv();
+    const requestWorkspaceKey = workspaceKey;
     try {
       const entries = await invoke<DirEntry[]>("fs_read_dir", {
         path,
@@ -143,6 +154,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         gitDecorations: gitDecorationsRef.current,
         workspace,
       });
+      if (workspaceKeyRef.current !== requestWorkspaceKey) return;
       retryUntilRef.current.delete(path);
       const retryTimer = retryTimersRef.current.get(path);
       if (retryTimer) {
@@ -190,9 +202,10 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         });
         const toUnwatch: string[] = [];
         for (const d of dead) if (watchedRef.current.delete(d)) toUnwatch.push(d);
-        watchRemove(toUnwatch);
+        watchRemove(toUnwatch, workspace);
       }
     } catch (e) {
+      if (workspaceKeyRef.current !== requestWorkspaceKey) return;
       const message = String(e);
       if (workspace.kind === "ssh" && isPendingSshAuthError(message)) {
         const now = Date.now();
@@ -221,7 +234,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         [path]: { status: "error", message },
       }));
     }
-  }, []);
+  }, [workspace, workspaceKey]);
 
   // Root change → restore the cached expansion for this root, re-scope watches,
   // and persist the outgoing root's expansion on the way out.
@@ -236,7 +249,8 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     setPendingCreate(null);
     setRenaming(null);
 
-    const restored = recallExpansion(rootPath);
+    const cacheKey = expansionKey(workspaceKey, rootPath);
+    const restored = recallExpansion(cacheKey);
     setExpanded(new Set(restored));
     setNodes({});
 
@@ -244,19 +258,19 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     void fetchChildren(rootPath);
     for (const d of restored) void fetchChildren(d);
     for (const p of toWatch) watchedRef.current.add(p);
-    watchAdd(toWatch);
+    watchAdd(toWatch, workspace);
 
     return () => {
-      rememberExpansion(rootPath, expandedRef.current);
+      rememberExpansion(cacheKey, expandedRef.current);
       for (const timer of retryTimersRef.current.values()) clearTimeout(timer);
       retryTimersRef.current.clear();
       retryUntilRef.current.clear();
       if (watchedRef.current.size > 0) {
-        watchRemove([...watchedRef.current]);
+        watchRemove([...watchedRef.current], workspace);
         watchedRef.current.clear();
       }
     };
-  }, [rootPath, fetchChildren]);
+  }, [rootPath, workspaceKey, workspace, fetchChildren]);
 
   useEffect(() => {
     let alive = true;
@@ -395,7 +409,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       const cmd =
         pendingCreate.kind === "dir" ? "fs_create_dir" : "fs_create_file";
       try {
-        await invoke(cmd, { path, workspace: currentWorkspaceEnv() });
+        await invoke(cmd, { path, workspace });
         await fetchChildren(pendingCreate.parentPath);
       } catch (e) {
         console.error(`${cmd} failed:`, e);
@@ -403,7 +417,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         setPendingCreate(null);
       }
     },
-    [pendingCreate, fetchChildren],
+    [pendingCreate, workspace, fetchChildren],
   );
 
   const beginRename = useCallback((path: string) => {
@@ -428,7 +442,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         await invoke("fs_rename", {
           from: renaming,
           to,
-          workspace: currentWorkspaceEnv(),
+          workspace,
         });
         options?.onPathRenamed?.(renaming, to);
         await fetchChildren(parent);
@@ -438,20 +452,20 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         setRenaming(null);
       }
     },
-    [renaming, fetchChildren, options],
+    [renaming, workspace, fetchChildren, options],
   );
 
   const deletePath = useCallback(
     async (path: string) => {
       try {
-        await invoke("fs_delete", { path, workspace: currentWorkspaceEnv() });
+        await invoke("fs_delete", { path, workspace });
         options?.onPathDeleted?.(path);
         await fetchChildren(dirname(path));
       } catch (e) {
         console.error("fs_delete failed:", e);
       }
     },
-    [fetchChildren, options],
+    [workspace, fetchChildren, options],
   );
 
   const movePath = useCallback(
@@ -471,7 +485,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         await invoke("fs_rename", {
           from,
           to,
-          workspace: currentWorkspaceEnv(),
+          workspace,
         });
         options?.onPathRenamed?.(from, to);
         await Promise.all([fetchChildren(dirname(from)), fetchChildren(toDir)]);
@@ -479,7 +493,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         console.error("fs_rename (move) failed:", e);
       }
     },
-    [fetchChildren, options],
+    [workspace, fetchChildren, options],
   );
 
   return {

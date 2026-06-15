@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { WorkspaceEnv } from "@/modules/workspace";
 import type { Tab } from "./useTabs";
 
 type Result = {
@@ -10,6 +11,7 @@ export function useWorkspaceCwd(
   activeTab: Tab | undefined,
   tabs: Tab[],
   home: string | null,
+  workspaceEnv: WorkspaceEnv,
 ): Result {
   const lastTerminalCwd = useRef<string | null>(null);
 
@@ -28,12 +30,13 @@ export function useWorkspaceCwd(
   }, [activeTab, tabs, home]);
 
   const inheritedCwdForNewTab = useCallback((): string | undefined => {
+    if (workspaceEnv.kind === "ssh") return home ?? undefined;
     if (activeTab?.kind === "terminal" && activeTab.cwd) return activeTab.cwd;
     // Editor tabs inherit the last terminal's cwd (or workspace home), not
     // the file's folder — opening a new terminal from a file shouldn't
     // hijack the user's working directory context.
     return lastTerminalCwd.current ?? home ?? undefined;
-  }, [activeTab, home]);
+  }, [activeTab, home, workspaceEnv.kind]);
 
   return { explorerRoot, inheritedCwdForNewTab };
 }
