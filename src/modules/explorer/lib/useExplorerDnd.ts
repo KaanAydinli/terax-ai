@@ -1,3 +1,8 @@
+import {
+  clearTerminalDropTarget,
+  pasteDroppedPathsAtPoint,
+  setTerminalDropTargetAtPoint,
+} from "@/modules/terminal/lib/fileDropTarget";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -30,19 +35,29 @@ export function useExplorerDnd({ rootPath, isDir, onMove }: Options) {
   const optsRef = useRef({ rootPath, isDir, onMove });
   optsRef.current = { rootPath, isDir, onMove };
 
-  const placeGhost = (x: number, y: number) => {
+  const placeGhost = useCallback((x: number, y: number) => {
     lastPosRef.current = { x, y };
     const g = ghostElRef.current;
     if (g) {
-      g.style.left = `${x + 12}px`;
-      g.style.top = `${y + 8}px`;
+      const gap = 8;
+      const width = g.offsetWidth;
+      const height = g.offsetHeight;
+      const left =
+        x + 12 + width + gap > window.innerWidth
+          ? Math.max(gap, x - width - 12)
+          : x + 12;
+      const top =
+        y + 8 + height + gap > window.innerHeight
+          ? Math.max(gap, y - height - 8)
+          : y + 8;
+      g.style.transform = `translate3d(${left}px, ${top}px, 0)`;
     }
-  };
+  }, []);
 
   const ghostRef = useCallback((el: HTMLDivElement | null) => {
     ghostElRef.current = el;
     if (el) placeGhost(lastPosRef.current.x, lastPosRef.current.y);
-  }, []);
+  }, [placeGhost]);
 
   const onPointerDown = useCallback((e: ReactPointerEvent) => {
     if (e.button !== 0) return;
@@ -62,6 +77,14 @@ export function useExplorerDnd({ rootPath, isDir, onMove }: Options) {
         setDragLabel(name);
       }
       placeGhost(ev.clientX, ev.clientY);
+      if (setTerminalDropTargetAtPoint(ev.clientX, ev.clientY)) {
+        if (dropTargetRef.current !== null) {
+          dropTargetRef.current = null;
+          setDropTargetDir(null);
+        }
+        return;
+      }
+      clearTerminalDropTarget();
       const { rootPath, isDir } = optsRef.current;
       const hit = document
         .elementFromPoint(ev.clientX, ev.clientY)
@@ -86,12 +109,20 @@ export function useExplorerDnd({ rootPath, isDir, onMove }: Options) {
     const end = (commit: boolean) => {
       detach();
       if (!active) return;
-      if (commit && dropTargetRef.current)
+      const droppedInTerminal =
+        commit &&
+        pasteDroppedPathsAtPoint(
+          [source],
+          lastPosRef.current.x,
+          lastPosRef.current.y,
+        );
+      if (!droppedInTerminal && commit && dropTargetRef.current)
         optsRef.current.onMove(source, dropTargetRef.current);
       suppressClickRef.current = true;
       setTimeout(() => {
         suppressClickRef.current = false;
       }, 0);
+      clearTerminalDropTarget();
       dropTargetRef.current = null;
       setDragLabel(null);
       setDropTargetDir(null);
@@ -102,7 +133,7 @@ export function useExplorerDnd({ rootPath, isDir, onMove }: Options) {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     cleanupRef.current = detach;
-  }, []);
+  }, [placeGhost]);
 
   const onClickCapture = useCallback((e: React.MouseEvent) => {
     if (suppressClickRef.current) {

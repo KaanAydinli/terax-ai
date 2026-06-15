@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { ExplorerSearch, type ExplorerSearchHandle } from "./ExplorerSearch";
 import { EntryRow, PendingRow, StatusRow, type RowActions } from "./TreeRow";
@@ -798,14 +799,17 @@ export const FileExplorer = memo(
           </ContextMenu>
         ) : null}
 
-        {dnd.dragLabel ? (
-          <div
-            ref={dnd.ghostRef}
-            className="pointer-events-none fixed left-0 top-0 z-50 flex items-center gap-1.5 rounded-sm border border-border/70 bg-card/95 px-2 py-1 text-[12px] text-foreground shadow-md"
-          >
-            {dnd.dragLabel}
-          </div>
-        ) : null}
+        {dnd.dragLabel
+          ? createPortal(
+              <div
+                ref={dnd.ghostRef}
+                className="pointer-events-none fixed top-0 left-0 z-50 max-w-[min(320px,calc(100vw-24px))] truncate rounded-sm border border-border/70 bg-card/95 px-2 py-1 text-[12px] text-foreground shadow-md"
+              >
+                {dnd.dragLabel}
+              </div>,
+              document.body,
+            )
+          : null}
       </div>
     );
   }),
