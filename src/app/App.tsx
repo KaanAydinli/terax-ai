@@ -71,6 +71,7 @@ import {
   leafIds,
   navigateFocusedBlocks,
   respawnSession,
+  setActiveTerminalWorkspaceLeaf,
   type TerminalPaneHandle,
   useTerminalFileDrop,
   writeToSession,
@@ -86,7 +87,14 @@ import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore } from "@/modules/workspace";
 import type { SearchAddon } from "@xterm/addon-search";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { CloseDialogs } from "./components/CloseDialogs";
 import {
   TOGGLE_BLOCK_INPUT_EVENT,
@@ -281,9 +289,14 @@ export default function App() {
     activeTab,
     tabs,
     launchCwd ?? home,
+    workspaceEnv,
   );
 
   useWindowTitle(activeTab, explorerRoot);
+
+  useLayoutEffect(() => {
+    setActiveTerminalWorkspaceLeaf(activeLeafId);
+  }, [activeLeafId]);
 
   useEffect(() => {
     setActiveSearchAddon(

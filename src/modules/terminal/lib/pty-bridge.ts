@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import type { WorkspaceEnv } from "@/modules/workspace";
 
 const textEncoder = new TextEncoder();
 
@@ -19,6 +19,7 @@ export async function openPty(
   cols: number,
   rows: number,
   handlers: PtyHandlers,
+  workspace: WorkspaceEnv,
   cwd?: string,
   blocks?: boolean,
 ): Promise<PtySession> {
@@ -45,7 +46,7 @@ export async function openPty(
     cols,
     rows,
     cwd: cwd ?? null,
-    workspace: currentWorkspaceEnv(),
+    workspace,
     blocks: blocks ?? false,
     onData,
     onExit,
