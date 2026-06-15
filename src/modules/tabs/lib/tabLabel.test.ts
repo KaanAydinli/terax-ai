@@ -25,9 +25,25 @@ describe("labelFor (terminal tabs)", () => {
     expect(labelFor(terminalTab({ title: "private" }))).toBe("private");
   });
 
+  it("uses SSH for an ssh terminal without a custom label", () => {
+    expect(labelFor(terminalTab({ ssh: true }))).toBe("SSH");
+    expect(
+      labelFor(
+        terminalTab({
+          paneTree: { kind: "leaf", id: 2, ssh: true },
+        }),
+      ),
+    ).toBe("SSH");
+  });
+
   it("prefers a custom title over the cwd-derived name", () => {
     expect(
-      labelFor(terminalTab({ cwd: "/Users/me/projects/terax-ai", customTitle: "Server" })),
+      labelFor(
+        terminalTab({
+          cwd: "/Users/me/projects/terax-ai",
+          customTitle: "Server",
+        }),
+      ),
     ).toBe("Server");
   });
 

@@ -1,6 +1,7 @@
 import { isMarkdownPath } from "@/lib/utils";
 import {
   findLeafCwd,
+  findLeafSsh,
   hasLeaf,
   leafIds,
   nextLeafId,
@@ -8,6 +9,7 @@ import {
   removeLeaf,
   type SplitDir,
   setLeafCwd as setLeafCwdInTree,
+  setLeafSsh as setLeafSshInTree,
   siblingLeafOf,
   splitLeaf,
 } from "@/modules/terminal/lib/panes";
@@ -28,6 +30,7 @@ export type TerminalTab = TabBase & {
   kind: "terminal";
   title: string;
   cwd?: string;
+  ssh?: boolean;
   paneTree: PaneNode;
   activeLeafId: number;
   blocks?: boolean;
@@ -881,6 +884,22 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     });
   }, []);
 
+  const setLeafSsh = useCallback((leafId: number, ssh: boolean) => {
+    setTabs((curr) => {
+      let changed = false;
+      const next = curr.map((t) => {
+        if (t.kind !== "terminal" || !hasLeaf(t.paneTree, leafId)) return t;
+        const paneTree = setLeafSshInTree(t.paneTree, leafId, ssh);
+        const isActive = t.activeLeafId === leafId;
+        const sshChanged = isActive && Boolean(t.ssh) !== ssh;
+        if (paneTree === t.paneTree && !sshChanged) return t;
+        changed = true;
+        return { ...t, paneTree, ...(sshChanged && { ssh }) };
+      });
+      return changed ? next : curr;
+    });
+  }, []);
+
   const focusPane = useCallback((tabId: number, leafId: number) => {
     setTabs((curr) =>
       curr.map((t) => {
@@ -888,9 +907,11 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         if (!hasLeaf(t.paneTree, leafId)) return t;
         if (t.activeLeafId === leafId) return t;
         const cwd = findLeafCwd(t.paneTree, leafId);
+        const ssh = findLeafSsh(t.paneTree, leafId);
         return {
           ...t,
           activeLeafId: leafId,
+          ssh,
           ...(cwd !== undefined && { cwd }),
         };
       }),
@@ -904,7 +925,13 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         const next = nextLeafId(t.paneTree, t.activeLeafId, delta);
         if (next === t.activeLeafId) return t;
         const cwd = findLeafCwd(t.paneTree, next);
-        return { ...t, activeLeafId: next, ...(cwd !== undefined && { cwd }) };
+        const ssh = findLeafSsh(t.paneTree, next);
+        return {
+          ...t,
+          activeLeafId: next,
+          ssh,
+          ...(cwd !== undefined && { cwd }),
+        };
       }),
     );
   }, []);
@@ -928,7 +955,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
             dir,
             t.cwd,
           );
-          return { ...t, paneTree, activeLeafId: leafId };
+          return { ...t, paneTree, activeLeafId: leafId, ssh: false };
         }),
       );
       return newLeafId;
@@ -959,9 +986,10 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         newActive = sib && remaining.includes(sib) ? sib : remaining[0];
       }
       didRemove = true;
+      const ssh = findLeafSsh(newTree, newActive);
       return curr.map((x) =>
         x.id === tab.id
-          ? { ...x, paneTree: newTree, activeLeafId: newActive }
+          ? { ...x, paneTree: newTree, activeLeafId: newActive, ssh }
           : x,
       );
     });
@@ -988,10 +1016,11 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       const remaining = leafIds(newTree);
       const sib = siblingLeafOf(t.paneTree, target);
       const newActive = sib && remaining.includes(sib) ? sib : remaining[0];
+      const ssh = findLeafSsh(newTree, newActive);
       removedLeaf = target;
       return curr.map((x) =>
         x.id === tabId
-          ? { ...x, paneTree: newTree, activeLeafId: newActive }
+          ? { ...x, paneTree: newTree, activeLeafId: newActive, ssh }
           : x,
       );
     });
@@ -1054,6 +1083,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     updateTab,
     selectByIndex,
     setLeafCwd,
+    setLeafSsh,
     focusPane,
     focusNextPaneInTab,
     splitActivePane,

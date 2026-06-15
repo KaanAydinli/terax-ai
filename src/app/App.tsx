@@ -135,6 +135,7 @@ export default function App() {
     updateTab,
     selectByIndex,
     setLeafCwd,
+    setLeafSsh,
     focusPane,
     focusNextPaneInTab,
     splitActivePane,
@@ -763,6 +764,13 @@ export default function App() {
     [setLeafCwd],
   );
 
+  const handleTerminalSsh = useCallback(
+    (leafId: number, active: boolean) => {
+      setLeafSsh(leafId, active);
+    },
+    [setLeafSsh],
+  );
+
   const handleFocusLeaf = useCallback(
     (tabId: number, leafId: number) => focusPane(tabId, leafId),
     [focusPane],
@@ -1099,6 +1107,7 @@ export default function App() {
                       registerTerminalHandle={registerTerminalHandle}
                       onSearchReady={handleSearchReady}
                       onCwd={handleTerminalCwd}
+                      onSsh={handleTerminalSsh}
                       onExit={handleLeafExit}
                       onFocusLeaf={handleFocusLeaf}
                       registerEditorHandle={registerEditorHandle}

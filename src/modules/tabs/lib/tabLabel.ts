@@ -1,3 +1,4 @@
+import { findLeafSsh } from "@/modules/terminal/lib/panes";
 import type { Tab } from "./useTabs";
 
 /**
@@ -15,6 +16,7 @@ export function labelFor(t: Tab): string {
   if (t.kind === "git-history") return t.title;
   if (t.kind === "git-commit-file") return t.title;
   if (t.customTitle) return t.customTitle;
+  if (t.ssh || findLeafSsh(t.paneTree, t.activeLeafId)) return "SSH";
   if (!t.cwd) return t.title;
   const parts = t.cwd.split(/[\\/]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : "/";

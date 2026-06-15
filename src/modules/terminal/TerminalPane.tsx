@@ -35,6 +35,7 @@ type Props = {
   onSearchReady?: (leafId: number, addon: SearchAddon) => void;
   onExit?: (leafId: number, code: number) => void;
   onCwd?: (leafId: number, cwd: string) => void;
+  onSsh?: (leafId: number, active: boolean) => void;
 };
 
 export const TerminalPane = memo(
@@ -48,6 +49,7 @@ export const TerminalPane = memo(
       onSearchReady,
       onExit,
       onCwd,
+      onSsh,
     },
     ref,
   ) {
@@ -65,6 +67,7 @@ export const TerminalPane = memo(
       onSearchReady: (a) => onSearchReady?.(leafId, a),
       onExit: (c) => onExit?.(leafId, c),
       onCwd: (c) => onCwd?.(leafId, c),
+      onSsh: (active) => onSsh?.(leafId, active),
     });
 
     useEffect(() => {
