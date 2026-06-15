@@ -227,6 +227,8 @@ pub fn run() {
             workspace::wsl_list_distros,
             workspace::wsl_default_distro,
             workspace::wsl_home,
+            workspace::ssh_home,
+            workspace::ssh_default_root,
             workspace::workspace_authorize,
             workspace::workspace_current_dir,
             get_launch_dir,

@@ -93,3 +93,11 @@ function __terax_preexec --on-event fish_preexec
     set -l cmd (string replace -ra '[\x00-\x1f\x7f]' ' ' -- "$argv")
     printf '\e]133;C;%s\e\\' (string sub -l 256 -- "$cmd")
 end
+
+function ssh
+    command ssh \
+        -o ControlMaster=auto \
+        -o ControlPersist=1h \
+        -o ControlPath=/tmp/terax-ssh-%C \
+        $argv
+end

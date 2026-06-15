@@ -67,6 +67,14 @@ if [ -z "$__TERAX_HOOKS_LOADED" ]; then
     printf '\e]133;C;%s\e\\' "${cmd:0:256}"
   }
 
+  ssh() {
+    command ssh \
+      -o ControlMaster=auto \
+      -o ControlPersist=1h \
+      -o ControlPath=/tmp/terax-ssh-%C \
+      "$@"
+  }
+
   __TERAX_USER_PROMPT_COMMAND="${PROMPT_COMMAND:-}"
   _terax_prompt_command() {
     local _terax_ret=$?

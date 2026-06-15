@@ -3,6 +3,7 @@ import { homeDir } from "@tauri-apps/api/path";
 import { native } from "@/modules/ai/lib/native";
 import type { Tab } from "@/modules/tabs";
 import {
+  getSshHome,
   getWslHome,
   LOCAL_WORKSPACE,
   type WorkspaceEnv,
@@ -57,11 +58,7 @@ export function useWorkspaceSwitcher({
 
   const switchWorkspace = useCallback(
     async (env: WorkspaceEnv) => {
-      if (
-        env.kind === workspaceEnv.kind &&
-        (env.kind === "local" ||
-          (workspaceEnv.kind === "wsl" && env.distro === workspaceEnv.distro))
-      ) {
+      if (sameWorkspace(env, workspaceEnv)) {
         return;
       }
       const dirty = tabsRef.current.some((t) => t.kind === "editor" && t.dirty);
@@ -76,6 +73,8 @@ export function useWorkspaceSwitcher({
       try {
         if (env.kind === "wsl") {
           nextHome = await getWslHome(env.distro);
+        } else if (env.kind === "ssh") {
+          nextHome = await getSshHome(env);
         } else {
           nextHome = (await homeDir()).replace(/\\/g, "/");
         }
@@ -107,4 +106,19 @@ export function useWorkspaceSwitcher({
   );
 
   return { home, launchCwd, launchCwdResolved, switchWorkspace };
+}
+
+function sameWorkspace(a: WorkspaceEnv, b: WorkspaceEnv): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "local") return true;
+  if (a.kind === "wsl" && b.kind === "wsl") return a.distro === b.distro;
+  if (a.kind === "ssh" && b.kind === "ssh") {
+    return (
+      a.host === b.host &&
+      (a.user ?? null) === (b.user ?? null) &&
+      (a.port ?? null) === (b.port ?? null) &&
+      (a.root ?? null) === (b.root ?? null)
+    );
+  }
+  return false;
 }

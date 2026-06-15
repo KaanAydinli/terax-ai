@@ -1,10 +1,15 @@
 export {
   currentWorkspaceScopeKey,
   currentWorkspaceEnv,
+  getSshDefaultRoot,
+  getSshHome,
   getWslHome,
   LOCAL_WORKSPACE,
+  parseSshConnection,
+  sshLabel,
   useWorkspaceEnvStore,
   workspaceScopeKey,
+  type SshConnection,
   type WorkspaceEnv,
   type WslDistro,
 } from "./env";

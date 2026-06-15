@@ -7,7 +7,7 @@ use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::UTF8;
 use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::to_canon;
 use crate::modules::workspace::{resolve_path, WorkspaceEnv};
@@ -25,7 +25,7 @@ pub struct ContentSearchState {
     generation: AtomicU64,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct GrepHit {
     pub path: String,
     pub rel: String,
@@ -33,7 +33,7 @@ pub struct GrepHit {
     pub text: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct GrepResponse {
     pub hits: Vec<GrepHit>,
     pub truncated: bool,
@@ -182,6 +182,20 @@ pub fn fs_grep(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        let cap = max_results
+            .unwrap_or(DEFAULT_MAX_RESULTS)
+            .clamp(1, HARD_MAX_RESULTS);
+        return super::ssh::grep(
+            &workspace,
+            &root,
+            &pattern,
+            glob.as_deref().unwrap_or(&[]),
+            case_insensitive.unwrap_or(false),
+            cap,
+            false,
+        );
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
@@ -225,6 +239,12 @@ pub fn fs_grep_interactive(
     let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
     let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        let cap = max_results
+            .unwrap_or(DEFAULT_MAX_RESULTS)
+            .clamp(1, HARD_MAX_RESULTS);
+        return super::ssh::grep(&workspace, &root, &pattern, &[], false, cap, true);
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
@@ -241,23 +261,17 @@ pub fn fs_grep_interactive(
 
     let cancel = || state.generation.load(Ordering::SeqCst) != my_gen;
     Ok(search_tree(
-        &root_path,
-        &root,
-        &workspace,
-        &matcher,
-        &None,
-        cap,
-        &cancel,
+        &root_path, &root, &workspace, &matcher, &None, cap, &cancel,
     ))
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct GlobHit {
     pub path: String,
     pub rel: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct GlobResponse {
     pub hits: Vec<GlobHit>,
     pub truncated: bool,
@@ -274,6 +288,12 @@ pub fn fs_glob(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        let cap = max_results
+            .unwrap_or(DEFAULT_MAX_RESULTS)
+            .clamp(1, HARD_MAX_RESULTS);
+        return super::ssh::glob(&workspace, &root, &pattern, cap);
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
@@ -361,11 +381,26 @@ mod tests {
         let ws = WorkspaceEnv::from_option(None);
         let root_display = dir.path().to_string_lossy().to_string();
 
-        let live = search_tree(dir.path(), &root_display, &ws, &matcher, &None, 100, &|| false);
+        let live = search_tree(
+            dir.path(),
+            &root_display,
+            &ws,
+            &matcher,
+            &None,
+            100,
+            &|| false,
+        );
         assert_eq!(live.hits.len(), 1, "uncancelled search finds the match");
 
-        let stopped =
-            search_tree(dir.path(), &root_display, &ws, &matcher, &None, 100, &|| true);
+        let stopped = search_tree(
+            dir.path(),
+            &root_display,
+            &ws,
+            &matcher,
+            &None,
+            100,
+            &|| true,
+        );
         assert!(stopped.hits.is_empty(), "cancelled search yields nothing");
     }
 }

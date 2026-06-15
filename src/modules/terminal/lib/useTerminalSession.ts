@@ -1,6 +1,14 @@
 import { ensureMonoFontsLoaded } from "@/lib/fonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
+import {
+  getSshDefaultRoot,
+  getSshHome,
+  useWorkspaceEnvStore,
+  workspaceScopeKey,
+  type WorkspaceEnv,
+} from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { SearchAddon } from "@xterm/addon-search";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -16,6 +24,9 @@ import {
   registerPromptTracker,
 } from "./osc-handlers";
 import { openPty, type PtySession } from "./pty-bridge";
+import {
+  parseSshWorkspaceFromCommand,
+} from "./sshCommand";
 import "../block/block.css";
 import { ensureAgentActivityListener, isAgentActivePty } from "./agentActivity";
 import {
@@ -91,7 +102,15 @@ type Session = {
   commandRunning: boolean;
   hiddenReleaseTimer: ReturnType<typeof setTimeout> | null;
   spawnFailed: boolean;
+  inputLine: string;
+  autoSsh: {
+    env: SshEnv;
+    previousEnv: WorkspaceEnv;
+    previousCwd: string | null;
+  } | null;
 };
+
+type SshEnv = Extract<WorkspaceEnv, { kind: "ssh" }>;
 
 const sessions = new Map<number, Session>();
 
@@ -138,7 +157,7 @@ export function whenSessionReady(
 export function writeToSession(leafId: number, data: string): boolean {
   const s = sessions.get(leafId);
   if (!s?.pty) return false;
-  void s.pty.write(data);
+  void s.pty.write(prepareTerminalWrite(leafId, s, data));
   return true;
 }
 
@@ -146,13 +165,18 @@ export function submitToLeaf(leafId: number, text: string): void {
   const s = sessions.get(leafId);
   if (!s?.pty) return;
   s.everSubmitted = true;
+  const env = s.autoSsh ? null : parseSshWorkspaceFromCommand(text);
+  if (env) void activateSshWorkspace(leafId, s, env);
   // Bracketed paste keeps a multiline command atomic; trailing CR runs it.
   if (text.includes("\n")) s.pty.write(`\x1b[200~${text}\x1b[201~\r`);
   else s.pty.write(`${text}\r`);
 }
 
 export function interruptLeaf(leafId: number): void {
-  sessions.get(leafId)?.pty?.write("\x03");
+  const s = sessions.get(leafId);
+  if (!s?.pty) return;
+  s.inputLine = "";
+  s.pty.write("\x03");
 }
 
 export function leafCwd(leafId: number): string | null {
@@ -273,6 +297,141 @@ function leafBusy(s: Session): boolean {
   return s.commandRunning || (s.pty !== null && isAgentActivePty(s.pty.id));
 }
 
+const MAX_TRACKED_INPUT_LINE = 4096;
+
+function prepareTerminalWrite(leafId: number, s: Session, data: string): string {
+  if (s.autoSsh) return data;
+  const command = data === "\r" || data === "\n" ? s.inputLine.trim() : "";
+  const env = command ? parseSshWorkspaceFromCommand(command) : null;
+  captureTerminalInput(s, data);
+  if (!env) return data;
+  void activateSshWorkspace(leafId, s, env);
+  return data;
+}
+
+function captureTerminalInput(s: Session, data: string): void {
+  let escapeState: "prefix" | "csi" | "osc" | "oscEsc" | null = null;
+  for (const ch of data) {
+    if (escapeState) {
+      escapeState = nextEscapeState(escapeState, ch);
+      continue;
+    }
+    if (ch === "\x1b") {
+      escapeState = "prefix";
+      continue;
+    }
+    if (ch === "\r" || ch === "\n") {
+      s.inputLine = "";
+      continue;
+    }
+    if (ch === "\x03" || ch === "\x15") {
+      s.inputLine = "";
+      continue;
+    }
+    if (ch === "\b" || ch === "\x7f") {
+      s.inputLine = s.inputLine.slice(0, -1);
+      continue;
+    }
+    if (ch >= " " && ch !== "\x7f") {
+      s.inputLine = `${s.inputLine}${ch}`.slice(-MAX_TRACKED_INPUT_LINE);
+    }
+  }
+}
+
+function nextEscapeState(
+  state: "prefix" | "csi" | "osc" | "oscEsc",
+  ch: string,
+): "prefix" | "csi" | "osc" | "oscEsc" | null {
+  if (state === "prefix") {
+    if (ch === "[") return "csi";
+    if (ch === "]") return "osc";
+    return null;
+  }
+  if (state === "csi") return ch >= "@" && ch <= "~" ? null : "csi";
+  if (state === "osc") {
+    if (ch === "\x07") return null;
+    if (ch === "\x1b") return "oscEsc";
+    return "osc";
+  }
+  return ch === "\\" ? null : "osc";
+}
+
+function sameWorkspace(a: WorkspaceEnv, b: WorkspaceEnv): boolean {
+  if (workspaceScopeKey(a) !== workspaceScopeKey(b)) return false;
+  if (a.kind !== "ssh" || b.kind !== "ssh") return true;
+  return (a.root ?? null) === (b.root ?? null);
+}
+
+async function activateSshWorkspace(
+  leafId: number,
+  s: Session,
+  env: SshEnv,
+): Promise<void> {
+  if (s.autoSsh && sameWorkspace(s.autoSsh.env, env)) return;
+  const store = useWorkspaceEnvStore.getState();
+  const previousEnv = store.env;
+  const previousCwd = s.lastCwd ?? s.initialCwd ?? null;
+  const marker = { env, previousEnv, previousCwd };
+  s.autoSsh = marker;
+
+  try {
+    const root = await getSshDefaultRoot(env);
+    if (s.disposed || sessions.get(leafId) !== s || s.autoSsh !== marker) {
+      return;
+    }
+    const envWithRoot = { ...env, root };
+    marker.env = envWithRoot;
+    useWorkspaceEnvStore.getState().setEnv(envWithRoot);
+    s.lastCwd = root;
+    s.callbacks.onCwd?.(root);
+    void refreshWhenSshReady(leafId, s, marker, envWithRoot, root);
+  } catch (e) {
+    if (s.autoSsh === marker) {
+      s.autoSsh = null;
+      useWorkspaceEnvStore.getState().setEnv(previousEnv);
+    }
+    console.warn("[terax] failed to activate SSH workspace:", e);
+  }
+}
+
+async function refreshWhenSshReady(
+  leafId: number,
+  s: Session,
+  marker: NonNullable<Session["autoSsh"]>,
+  env: SshEnv,
+  root: string,
+): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (s.disposed || sessions.get(leafId) !== s || s.autoSsh !== marker) {
+      return;
+    }
+    try {
+      await getSshHome(env);
+      if (s.disposed || sessions.get(leafId) !== s || s.autoSsh !== marker) {
+        return;
+      }
+      await getCurrentWebviewWindow().emit("fs:changed", { paths: [root] });
+      return;
+    } catch {
+      // Password prompt may still be in progress; keep polling briefly.
+    }
+  }
+}
+
+function restoreAutoSshWorkspace(s: Session): void {
+  const auto = s.autoSsh;
+  if (!auto) return;
+  s.autoSsh = null;
+  const store = useWorkspaceEnvStore.getState();
+  if (sameWorkspace(store.env, auto.env)) store.setEnv(auto.previousEnv);
+  if (auto.previousCwd !== null) {
+    s.lastCwd = auto.previousCwd;
+    s.callbacks.onCwd?.(auto.previousCwd);
+  }
+}
+
 const HIDDEN_RELEASE_DELAY_MS = 300;
 
 // A parked hidden leaf went idle: give the post-command prompt a moment to
@@ -318,6 +477,7 @@ function onLeafCommandState(leafId: number, running: boolean): void {
   if (!s || s.commandRunning === running) return;
   s.commandRunning = running;
   if (!running) {
+    restoreAutoSshWorkspace(s);
     scheduleHiddenRelease(leafId, s);
     return;
   }
@@ -354,7 +514,7 @@ configureRendererPool({
           if (data.includes("\r")) void respawnSession(leafId);
           return;
         }
-        s.pty?.write(data);
+        s.pty?.write(prepareTerminalWrite(leafId, s, data));
       },
       resizePty: (cols, rows) => {
         s.cols = cols;
@@ -442,6 +602,8 @@ function ensureSession(
     commandRunning: false,
     hiddenReleaseTimer: null,
     spawnFailed: false,
+    inputLine: "",
+    autoSsh: null,
   };
   sessions.set(leafId, session);
 
@@ -511,6 +673,7 @@ async function openPtyForSession(
     {
       onData: (bytes) => deliverPtyBytes(leafId, bytes),
       onExit: (code) => {
+        restoreAutoSshWorkspace(s);
         s.shellExited = true;
         s.pty = null;
         s.commandRunning = false;
@@ -693,6 +856,7 @@ export async function respawnSession(
   s.pty = null;
   s.snapshot = null;
   s.dormantRing = new DormantRing();
+  restoreAutoSshWorkspace(s);
   s.shellExited = false;
   s.pendingExit = null;
   s.altScreenAtRelease = false;
@@ -751,6 +915,7 @@ export function disposeSession(leafId: number): void {
   if (!s) return;
   s.disposed = true;
   cancelHiddenRelease(s);
+  restoreAutoSshWorkspace(s);
   disposeLeafSlot(leafId);
   s.hasSlot = false;
   s.snapshot = null;
@@ -895,7 +1060,11 @@ export function useTerminalSession({
   }, [leafId, visible, focused, blocks]);
 
   const write = useCallback(
-    (data: string) => sessions.get(leafId)?.pty?.write(data),
+    (data: string) => {
+      const s = sessions.get(leafId);
+      if (!s?.pty) return undefined;
+      return s.pty.write(prepareTerminalWrite(leafId, s, data));
+    },
     [leafId],
   );
 
