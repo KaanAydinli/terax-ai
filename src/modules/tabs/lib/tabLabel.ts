@@ -1,3 +1,4 @@
+import { findLeafSsh } from "@/modules/terminal/lib/panes";
 import type { Tab, TerminalAgentKind } from "./useTabs";
 
 export function terminalAgentLabel(agent: TerminalAgentKind): string {
@@ -31,5 +32,6 @@ export function labelFor(t: Tab): string {
   if (t.agent) return terminalAgentLabel(t.agent);
   if (t.blocks) return "Blocks";
   if (t.private) return "Private";
+  if (t.ssh || findLeafSsh(t.paneTree, t.activeLeafId)) return "SSH";
   return "Terminal";
 }

@@ -58,6 +58,7 @@ type Callbacks = {
   onSearchReady?: (addon: SearchAddon) => void;
   onExit?: (code: number) => void;
   onCwd?: (cwd: string) => void;
+  onSsh?: (active: boolean) => void;
 };
 
 type Session = {
@@ -478,6 +479,7 @@ async function activateSshWorkspace(
     previousRemoteCwd: null,
   };
   s.autoSsh = marker;
+  s.callbacks.onSsh?.(true);
 
   try {
     const root = await getSshDefaultRoot(env);
@@ -494,6 +496,7 @@ async function activateSshWorkspace(
   } catch (e) {
     if (s.autoSsh === marker) {
       s.autoSsh = null;
+      s.callbacks.onSsh?.(false);
       applyWorkspaceEnvForLeaf(leafId, s);
     }
     console.warn("[terax] failed to activate SSH workspace:", e);
@@ -532,6 +535,7 @@ function restoreAutoSshWorkspace(leafId: number, s: Session): void {
   const auto = s.autoSsh;
   if (!auto) return;
   s.autoSsh = null;
+  s.callbacks.onSsh?.(false);
   applyWorkspaceEnvForLeaf(leafId, s);
   if (auto.previousCwd !== null) {
     s.lastCwd = auto.previousCwd;
@@ -1056,6 +1060,7 @@ type Options = {
   onSearchReady?: (addon: SearchAddon) => void;
   onExit?: (code: number) => void;
   onCwd?: (cwd: string) => void;
+  onSsh?: (active: boolean) => void;
 };
 
 export function useTerminalSession({
@@ -1068,9 +1073,10 @@ export function useTerminalSession({
   onSearchReady,
   onExit,
   onCwd,
+  onSsh,
 }: Options) {
-  const cbRef = useRef({ onSearchReady, onExit, onCwd });
-  cbRef.current = { onSearchReady, onExit, onCwd };
+  const cbRef = useRef({ onSearchReady, onExit, onCwd, onSsh });
+  cbRef.current = { onSearchReady, onExit, onCwd, onSsh };
 
   // initialCwd seeds the first PTY spawn only. It must NOT be an effect dep:
   // OSC 7 updates the leaf cwd on every `cd`, and re-running the bind effect
@@ -1089,6 +1095,7 @@ export function useTerminalSession({
         onSearchReady: (a) => cbRef.current.onSearchReady?.(a),
         onExit: (c) => cbRef.current.onExit?.(c),
         onCwd: (c) => cbRef.current.onCwd?.(c),
+        onSsh: (active) => cbRef.current.onSsh?.(active),
       });
       if (s.visibleNow && s.focusedNow && !s.blocks) focusSlot(leafId);
     });

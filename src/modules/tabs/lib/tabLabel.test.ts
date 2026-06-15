@@ -26,6 +26,17 @@ describe("labelFor (terminal tabs)", () => {
     expect(labelFor(terminalTab({ private: true }))).toBe("Private");
   });
 
+  it("uses SSH for an ssh terminal without a custom label", () => {
+    expect(labelFor(terminalTab({ ssh: true }))).toBe("SSH");
+    expect(
+      labelFor(
+        terminalTab({
+          paneTree: { kind: "leaf", id: 2, ssh: true },
+        }),
+      ),
+    ).toBe("SSH");
+  });
+
   it("uses coding agent labels", () => {
     expect(labelFor(terminalTab({ agent: "claude" }))).toBe("Claude Code");
     expect(labelFor(terminalTab({ agent: "codex" }))).toBe("Codex");

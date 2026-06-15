@@ -3,7 +3,7 @@ export type PaneId = number;
 export type SplitDir = "row" | "col";
 
 export type PaneNode =
-  | { kind: "leaf"; id: PaneId; cwd?: string }
+  | { kind: "leaf"; id: PaneId; cwd?: string; ssh?: boolean }
   | {
       kind: "split";
       id: PaneId;
@@ -11,9 +11,7 @@ export type PaneNode =
       children: PaneNode[];
     };
 
-export function isLeaf(
-  n: PaneNode,
-): n is Extract<PaneNode, { kind: "leaf" }> {
+export function isLeaf(n: PaneNode): n is Extract<PaneNode, { kind: "leaf" }> {
   return n.kind === "leaf";
 }
 
@@ -31,11 +29,12 @@ export function findLeafCwd(n: PaneNode, id: PaneId): string | undefined {
   return undefined;
 }
 
-export function setLeafCwd(
-  n: PaneNode,
-  id: PaneId,
-  cwd: string,
-): PaneNode {
+export function findLeafSsh(n: PaneNode, id: PaneId): boolean {
+  if (isLeaf(n)) return n.id === id && n.ssh === true;
+  return n.children.some((c) => findLeafSsh(c, id));
+}
+
+export function setLeafCwd(n: PaneNode, id: PaneId, cwd: string): PaneNode {
   if (isLeaf(n)) {
     if (n.id !== id || n.cwd === cwd) return n;
     return { ...n, cwd };
@@ -43,6 +42,20 @@ export function setLeafCwd(
   let changed = false;
   const next = n.children.map((c) => {
     const u = setLeafCwd(c, id, cwd);
+    if (u !== c) changed = true;
+    return u;
+  });
+  return changed ? { ...n, children: next } : n;
+}
+
+export function setLeafSsh(n: PaneNode, id: PaneId, ssh: boolean): PaneNode {
+  if (isLeaf(n)) {
+    if (n.id !== id || Boolean(n.ssh) === ssh) return n;
+    return { ...n, ssh };
+  }
+  let changed = false;
+  const next = n.children.map((c) => {
+    const u = setLeafSsh(c, id, ssh);
     if (u !== c) changed = true;
     return u;
   });
@@ -102,10 +115,7 @@ export function splitLeaf(
  * Remove a leaf and collapse single-child splits left in its wake. Returns
  * `null` when the entire subtree is gone.
  */
-export function removeLeaf(
-  tree: PaneNode,
-  targetId: PaneId,
-): PaneNode | null {
+export function removeLeaf(tree: PaneNode, targetId: PaneId): PaneNode | null {
   if (isLeaf(tree)) return tree.id === targetId ? null : tree;
   const newChildren: PaneNode[] = [];
   for (const c of tree.children) {
@@ -133,10 +143,7 @@ export function nextLeafId(
 // next sibling, fall back to the previous. Used to pick the new focus
 // when a pane closes (so focus stays in the same neighborhood instead of
 // snapping to the first pane in the tree).
-export function siblingLeafOf(
-  tree: PaneNode,
-  leafId: PaneId,
-): PaneId | null {
+export function siblingLeafOf(tree: PaneNode, leafId: PaneId): PaneId | null {
   if (isLeaf(tree)) return null;
   for (let i = 0; i < tree.children.length; i++) {
     const c = tree.children[i];
