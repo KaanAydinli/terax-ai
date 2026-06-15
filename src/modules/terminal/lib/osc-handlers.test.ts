@@ -22,7 +22,9 @@ function makeFakeTerm() {
         return { dispose: () => handlers.delete(code) };
       },
     },
-    registerMarker: vi.fn().mockReturnValue({ isDisposed: false, dispose: vi.fn() }),
+    registerMarker: vi
+      .fn()
+      .mockReturnValue({ isDisposed: false, dispose: vi.fn() }),
   } as unknown as Terminal;
   return { term, handlers };
 }
@@ -57,6 +59,22 @@ describe("OSC 7 cwd handler — gated by OSC 133 in-command state", () => {
     handlers.get(7)?.("file://host/etc"); // attacker injection
 
     expect(onCwd).not.toHaveBeenCalled();
+  });
+
+  it("accepts OSC 7 during a command only when the caller opts in", () => {
+    const { term, handlers } = makeFakeTerm();
+    const state = createShellIntegrationState();
+    const onCwd = vi.fn();
+    registerPromptTracker(term, state);
+    registerCwdHandler(term, onCwd, state, {
+      allowDuringCommand: () => true,
+    });
+
+    handlers.get(133)?.("A");
+    handlers.get(133)?.("B");
+    handlers.get(7)?.("file://host/home/me/remote");
+
+    expect(onCwd).toHaveBeenCalledWith("/home/me/remote");
   });
 
   it("re-accepts OSC 7 after command finishes (OSC 133 D)", () => {
