@@ -131,6 +131,7 @@ export default function App() {
     replaceTabs,
     moveTabToSpace,
     reorderTab,
+    reorderTabByGap,
     newTabInSpace,
     removeTabsForSpace,
     markBooted,
@@ -1187,6 +1188,7 @@ export default function App() {
               onCloseAllEditors={handleCloseAllEditors}
               onPin={pinTab}
               onRename={handleRenameTab}
+              onReorder={reorderTabByGap}
               onToggleSidebar={toggleSidebar}
               onOpenCommandPalette={() => openCommandPalette("commands")}
               onActivateAgent={onActivateAgent}

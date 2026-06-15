@@ -44,6 +44,8 @@ type Props = {
   onPin: (id: number) => void;
   /** Set a terminal tab's custom label; empty string resets to default. */
   onRename: (id: number, title: string) => void;
+  /** Move a dragged tab to a new position (insertion gap index). */
+  onReorder: (fromId: number, toGapIndex: number) => void;
   onToggleSidebar: () => void;
   onOpenCommandPalette: () => void;
   onActivateAgent: (tabId: number, leafId: number) => void;
@@ -69,6 +71,7 @@ export function Header({
   onCloseAllEditors,
   onPin,
   onRename,
+  onReorder,
   onToggleSidebar,
   onOpenCommandPalette,
   onActivateAgent,
@@ -172,6 +175,7 @@ export function Header({
               onClose={onClose}
               onPin={onPin}
               onRename={onRename}
+              onReorder={onReorder}
               compact={compact}
             />
             <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
