@@ -4,12 +4,18 @@ import type { Tab } from "@/modules/tabs";
 import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
 import { isLeaf, type PaneNode } from "@/modules/terminal/lib/panes";
 import { LOCAL_WORKSPACE } from "@/modules/workspace";
-import { freshTerminalTab, hydrateTabs } from "./serialize";
+import {
+  fallbackCwd,
+  recoverMissingTerminalCwds,
+  sanitizeSpaceRoots,
+} from "./boot";
+import { freshTerminalTab, hydrateTabs, serializeTabs } from "./serialize";
 import {
   loadAll,
   newSpaceId,
   saveActiveId,
   saveSpacesList,
+  saveState,
   type SpaceMeta,
   type SpaceState,
 } from "./store";
@@ -20,6 +26,7 @@ type Params = {
   launchCwd: string | null;
   explicitLaunch: boolean;
   home: string | null;
+  restoreWorkspaces: boolean;
   allocId: () => number;
   replaceTabs: (tabs: Tab[], activeId: number) => void;
   markBooted: () => void;
@@ -167,11 +174,55 @@ export function resolveSpacesBoot({
   };
 }
 
+async function existingDirectories(paths: string[]): Promise<Set<string>> {
+  const unique = [...new Set(paths.filter(Boolean))];
+  const result = await Promise.all(
+    unique.map(async (path) => {
+      try {
+        const stat = await native.stat(path);
+        return stat.kind === "dir" ? path : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return new Set(result.filter((path): path is string => path !== null));
+}
+
+async function bootFresh(
+  root: string | null,
+  allocId: () => number,
+  replaceTabs: (tabs: Tab[], activeId: number) => void,
+  setActiveSpaceForNewTabs: (id: string) => void,
+): Promise<void> {
+  const meta: SpaceMeta = {
+    id: DEFAULT_SPACE_ID,
+    name: "Default",
+    root,
+    env: LOCAL_WORKSPACE,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const tab = freshTerminalTab(DEFAULT_SPACE_ID, root, allocId);
+  await saveSpacesList([meta]);
+  await saveActiveId(DEFAULT_SPACE_ID);
+  await saveState(DEFAULT_SPACE_ID, {
+    tabs: serializeTabs([tab]),
+    activeTabIndex: 0,
+  });
+  setActiveSpaceForNewTabs(DEFAULT_SPACE_ID);
+  useSpaces.getState().hydrate([meta], DEFAULT_SPACE_ID, {
+    [DEFAULT_SPACE_ID]: 0,
+  });
+  replaceTabs([tab], tab.id);
+}
+
 export function useSpacesBoot({
   ready,
   launchCwd,
   explicitLaunch,
   home,
+  restoreWorkspaces,
   allocId,
   replaceTabs,
   markBooted,
@@ -185,6 +236,12 @@ export function useSpacesBoot({
 
     void (async () => {
       try {
+        const root = fallbackCwd(launchCwd, home);
+        if (!restoreWorkspaces) {
+          await bootFresh(root, allocId, replaceTabs, setActiveSpaceForNewTabs);
+          return;
+        }
+
         const { spaces, activeId, states } = await loadAll();
         const boot = resolveSpacesBoot({
           spaces,
@@ -196,17 +253,43 @@ export function useSpacesBoot({
           allocId,
         });
 
-        if (boot.saveSpaces) await saveSpacesList(boot.spaces);
+        const validCwds = await existingDirectories([
+          ...uniqueCwds(boot.tabs),
+          ...boot.spaces.flatMap((space) => (space.root ? [space.root] : [])),
+        ]);
+        const spaceRecovery = sanitizeSpaceRoots(boot.spaces, validCwds, root);
+        const tabRecovery = recoverMissingTerminalCwds(
+          boot.tabs,
+          validCwds,
+          root,
+        );
+        const bootSpaces = spaceRecovery.spaces;
+        const bootTabs = tabRecovery.tabs;
+        const changed =
+          boot.saveSpaces || spaceRecovery.changed || tabRecovery.changed;
+
+        if (changed) await saveSpacesList(bootSpaces);
         if (boot.saveActiveId) await saveActiveId(boot.activeId);
 
         setActiveSpaceForNewTabs(boot.activeId);
         await Promise.allSettled(
-          uniqueCwds(boot.tabs).map((cwd) => native.workspaceAuthorize(cwd)),
+          uniqueCwds(bootTabs).map((cwd) => native.workspaceAuthorize(cwd)),
         );
         useSpaces
           .getState()
-          .hydrate(boot.spaces, boot.activeId, boot.initialActiveIndex);
-        replaceTabs(boot.tabs, boot.activeTabId);
+          .hydrate(bootSpaces, boot.activeId, boot.initialActiveIndex);
+        replaceTabs(bootTabs, boot.activeTabId);
+
+        if (spaceRecovery.changed || tabRecovery.changed) {
+          for (const space of bootSpaces) {
+            const tabsForSpace = bootTabs.filter((t) => t.spaceId === space.id);
+            if (tabsForSpace.length === 0) continue;
+            await saveState(space.id, {
+              tabs: serializeTabs(tabsForSpace),
+              activeTabIndex: states.get(space.id)?.activeTabIndex ?? 0,
+            });
+          }
+        }
       } catch (e) {
         console.error("[terax] spaces boot failed:", e);
       } finally {
@@ -218,6 +301,7 @@ export function useSpacesBoot({
     launchCwd,
     explicitLaunch,
     home,
+    restoreWorkspaces,
     allocId,
     replaceTabs,
     markBooted,
