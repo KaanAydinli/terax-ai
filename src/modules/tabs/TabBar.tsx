@@ -35,6 +35,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -77,10 +78,15 @@ export function TabBar({
   const listRef = useRef<HTMLDivElement>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
-  const [dropGap, setDropGap] = useState<number | null>(null);
+  const [dragOffsetX, setDragOffsetX] = useState(0);
+  const dragOffsetRef = useRef(0);
+  const [dragOrder, setDragOrder] = useState<number[] | null>(null);
+  const dragOrderRef = useRef<number[] | null>(null);
+  const suppressClickRef = useRef(false);
   const drag = useRef<{
     pointerId: number;
     startX: number;
+    lastX: number;
     fromId: number;
     active: boolean;
   } | null>(null);
@@ -98,6 +104,18 @@ export function TabBar({
   useEffect(() => {
     seenRef.current = new Set(tabs.map((t) => t.id));
   }, [tabs]);
+
+  const orderedTabs = useMemo(() => {
+    if (!dragOrder) return tabs;
+    const byId = new Map(tabs.map((tab) => [tab.id, tab]));
+    const ordered = dragOrder
+      .map((id) => byId.get(id))
+      .filter((tab): tab is Tab => Boolean(tab));
+    for (const tab of tabs) {
+      if (!dragOrder.includes(tab.id)) ordered.push(tab);
+    }
+    return ordered;
+  }, [tabs, dragOrder]);
 
   // Single shared pill slides to the active tab instead of each tab toggling
   // its own background. Measured relative to the list (its offsetParent) so it
@@ -135,15 +153,63 @@ export function TabBar({
     }
   }, [pill, pillReady]);
 
-  const gapAtX = (clientX: number) => {
-    const els = Array.from(
-      scrollRef.current?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [],
+  const setVisualOrder = (next: number[]) => {
+    dragOrderRef.current = next;
+    setDragOrder(next);
+  };
+
+  const setClampedDragOffset = (rawOffset: number, draggedId: number) => {
+    const strip = scrollRef.current;
+    const tab = strip?.querySelector<HTMLElement>(
+      `[data-tab-id="${draggedId}"]`,
     );
-    for (let i = 0; i < els.length; i++) {
-      const r = els[i].getBoundingClientRect();
-      if (clientX < r.left + r.width / 2) return i;
+    if (!strip || !tab) {
+      dragOffsetRef.current = rawOffset;
+      setDragOffsetX(rawOffset);
+      return;
     }
-    return els.length;
+
+    const stripRect = strip.getBoundingClientRect();
+    const tabRect = tab.getBoundingClientRect();
+    const baseLeft = tabRect.left - dragOffsetRef.current;
+    const baseRight = tabRect.right - dragOffsetRef.current;
+    const min = stripRect.left - baseLeft;
+    const max = stripRect.right - baseRight;
+    const next = Math.max(min, Math.min(max, rawOffset));
+    dragOffsetRef.current = next;
+    setDragOffsetX(next);
+  };
+
+  const maybeMoveDraggedTab = (clientX: number, draggedId: number) => {
+    const order = dragOrderRef.current;
+    if (!order) return null;
+    const from = order.indexOf(draggedId);
+    if (from === -1) return null;
+
+    const st = drag.current;
+    const direction = st ? Math.sign(clientX - st.lastX) : 0;
+    if (direction === 0) return null;
+
+    const neighborIndex = direction > 0 ? from + 1 : from - 1;
+    const neighborId = order[neighborIndex];
+    if (neighborId == null) return null;
+
+    const neighbor = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-tab-id="${neighborId}"]`,
+    );
+    if (!neighbor) return null;
+
+    const rect = neighbor.getBoundingClientRect();
+    const midpoint = rect.left + rect.width / 2;
+    if (direction > 0 ? clientX <= midpoint : clientX >= midpoint) {
+      return null;
+    }
+
+    const next = [...order];
+    next[from] = neighborId;
+    next[neighborIndex] = draggedId;
+    setVisualOrder(next);
+    return midpoint;
   };
 
   const endDrag = (currentTarget: HTMLElement) => {
@@ -151,7 +217,10 @@ export function TabBar({
     if (st) currentTarget.releasePointerCapture?.(st.pointerId);
     drag.current = null;
     setDraggingId(null);
-    setDropGap(null);
+    dragOffsetRef.current = 0;
+    setDragOffsetX(0);
+    dragOrderRef.current = null;
+    setDragOrder(null);
     document.body.style.userSelect = "";
   };
 
@@ -209,17 +278,11 @@ export function TabBar({
                   : { opacity: 0 }
               }
             />
-            {tabs.map((t, i) => {
+            {orderedTabs.map((t) => {
               const isPreview = t.kind === "editor" && (t as EditorTab).preview;
               const isActive = t.id === activeId;
               const isNew = !firstRender && !seen.has(t.id);
-
-              const srcIndex = tabs.findIndex((x) => x.id === draggingId);
-              const showGap = (gap: number) =>
-                draggingId !== null &&
-                dropGap === gap &&
-                gap !== srcIndex &&
-                gap !== srcIndex + 1;
+              const isDragging = draggingId === t.id;
 
               // While renaming, render a non-button cell so the <input> is not
               // nested inside the trigger <button> (invalid HTML, and WebKit
@@ -227,7 +290,6 @@ export function TabBar({
               if (editingId === t.id && t.kind === "terminal") {
                 return (
                   <Fragment key={t.id}>
-                    {showGap(i) && <DropIndicator />}
                     <div
                       data-tab-id={t.id}
                       className={cn(
@@ -245,9 +307,6 @@ export function TabBar({
                         onCancel={() => setEditingId(null)}
                       />
                     </div>
-                    {i === tabs.length - 1 && showGap(tabs.length) && (
-                      <DropIndicator />
-                    )}
                   </Fragment>
                 );
               }
@@ -264,6 +323,7 @@ export function TabBar({
                     drag.current = {
                       pointerId: e.pointerId,
                       startX: e.clientX,
+                      lastX: e.clientX,
                       fromId: t.id,
                       active: false,
                     };
@@ -276,19 +336,50 @@ export function TabBar({
                       if (Math.abs(e.clientX - st.startX) < 4) return;
                       st.active = true;
                       setDraggingId(st.fromId);
+                      setVisualOrder(tabs.map((tab) => tab.id));
                       document.body.style.userSelect = "none";
                     }
                     e.preventDefault();
-                    setDropGap(gapAtX(e.clientX));
+                    const movedCenter = maybeMoveDraggedTab(
+                      e.clientX,
+                      st.fromId,
+                    );
+                    if (movedCenter !== null) {
+                      st.startX = movedCenter;
+                      setClampedDragOffset(e.clientX - movedCenter, st.fromId);
+                    } else {
+                      setClampedDragOffset(e.clientX - st.startX, st.fromId);
+                    }
+                    st.lastX = e.clientX;
                   }}
                   onPointerUp={(e) => {
                     const st = drag.current;
-                    if (st?.active && dropGap !== null) {
-                      onReorder(st.fromId, dropGap);
+                    if (st?.active) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const order = dragOrderRef.current;
+                      if (order) {
+                        const from = tabs.findIndex(
+                          (tab) => tab.id === st.fromId,
+                        );
+                        const to = order.indexOf(st.fromId);
+                        if (from !== -1 && to !== -1 && from !== to) {
+                          onReorder(st.fromId, to > from ? to + 1 : to);
+                        }
+                      }
+                      suppressClickRef.current = true;
+                      window.setTimeout(() => {
+                        suppressClickRef.current = false;
+                      }, 0);
                     }
                     endDrag(e.currentTarget);
                   }}
                   onPointerCancel={(e) => endDrag(e.currentTarget)}
+                  onClickCapture={(e) => {
+                    if (!suppressClickRef.current) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
                   onDoubleClick={() => isPreview && onPin(t.id)}
                   onAuxClick={(e) => {
                     if (e.button === 1 && tabs.length > 1) {
@@ -306,13 +397,22 @@ export function TabBar({
                     isActive
                       ? "text-foreground dark:text-foreground"
                       : "text-muted-foreground hover:text-foreground/80 dark:text-muted-foreground",
-                    draggingId === t.id && "opacity-50",
+                    isDragging &&
+                      "z-20 cursor-grabbing bg-accent/70 text-foreground shadow-lg ring-1 ring-border/70",
                     compact
                       ? "px-1.5!"
                       : tabs.length === 1
                         ? "px-2!"
                         : "ps-2! pe-1!",
                   )}
+                  style={
+                    isDragging
+                      ? {
+                          transform: `translateX(${dragOffsetX}px) scale(1.02)`,
+                          transitionProperty: "none",
+                        }
+                      : undefined
+                  }
                 >
                   <span
                     className={cn(
@@ -389,15 +489,7 @@ export function TabBar({
                   trigger
                 );
 
-              return (
-                <Fragment key={t.id}>
-                  {showGap(i) && <DropIndicator />}
-                  {tabNode}
-                  {i === tabs.length - 1 && showGap(tabs.length) && (
-                    <DropIndicator />
-                  )}
-                </Fragment>
-              );
+              return <Fragment key={t.id}>{tabNode}</Fragment>;
             })}
           </TabsList>
         </Tabs>
@@ -461,15 +553,6 @@ export function TabBar({
         </DropdownMenu>
       </div>
     </div>
-  );
-}
-
-function DropIndicator() {
-  return (
-    <span
-      aria-hidden
-      className="my-0.5 w-0.5 shrink-0 self-stretch rounded-full bg-primary"
-    />
   );
 }
 
