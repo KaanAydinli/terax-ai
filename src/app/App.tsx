@@ -47,8 +47,11 @@ import {
 } from "@/modules/shortcuts";
 import {
   SidebarRail,
+  SECONDARY_SIDEBAR_MAX_WIDTH,
+  SECONDARY_SIDEBAR_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  useSecondarySidebarPanel,
   useSidebarPanel,
 } from "@/modules/sidebar";
 import {
@@ -271,6 +274,11 @@ export default function App() {
     persistSidebarWidth,
     toggleExplorerFocus,
   } = useSidebarPanel(explorerRef);
+  const {
+    secondarySidebarRef,
+    toggleSecondarySidebar,
+    persistSecondarySidebarWidth,
+  } = useSecondarySidebarPanel();
 
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -752,6 +760,7 @@ export default function App() {
       "ai.askSelection": askFromSelection,
       "settings.open": () => void openSettingsWindow(),
       "sidebar.toggle": toggleSidebar,
+      "secondarySidebar.toggle": toggleSecondarySidebar,
       "explorer.focus": toggleExplorerFocus,
       "view.zoomIn": zoomIn,
       "view.zoomOut": zoomOut,
@@ -777,6 +786,7 @@ export default function App() {
       togglePanelAndFocus,
       askFromSelection,
       toggleSidebar,
+      toggleSecondarySidebar,
       toggleExplorerFocus,
       zoomIn,
       zoomOut,
@@ -816,15 +826,13 @@ export default function App() {
       if (id === "sidebar.toggle") {
         // Ctrl+B is also Claude Code's "run in background" key. While a terminal
         // is focused, let Ctrl+B reach the shell/Claude instead of toggling the
-        // sidebar. Ctrl+Shift+B (second binding) still toggles it from anywhere.
+        // sidebar.
         const target =
           (e.target as HTMLElement | null) ?? document.activeElement;
         const inTerminal = !!(target as HTMLElement | null)?.closest?.(
           ".xterm",
         );
-        // Only defer the plain (no-shift) Ctrl/⌘+B binding; the Shift variant
-        // is the always-on toggle and is never claimed by the terminal.
-        return inTerminal && !e.shiftKey;
+        return inTerminal;
       }
       return false;
     },
@@ -1090,6 +1098,7 @@ export default function App() {
             focusSearch: () => searchInlineRef.current?.focus(),
             focusExplorerSearch: () => explorerRef.current?.focusSearch(),
             toggleSidebar,
+            toggleSecondarySidebar,
             toggleAi: togglePanelAndFocus,
             askAiSelection: askFromSelection,
             openSettings: () => void openSettingsWindow(),
@@ -1117,6 +1126,7 @@ export default function App() {
       handleCloseTabOrPane,
       splitActivePaneInActiveTab,
       toggleSidebar,
+      toggleSecondarySidebar,
       togglePanelAndFocus,
       askFromSelection,
       activeSpaceId,
@@ -1279,6 +1289,23 @@ export default function App() {
                     onConnect={() => void openSettingsWindow("models")}
                   />
                 </div>
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                id="secondary-sidebar"
+                panelRef={secondarySidebarRef}
+                defaultSize="0px"
+                minSize={`${SECONDARY_SIDEBAR_MIN_WIDTH}px`}
+                maxSize={`${SECONDARY_SIDEBAR_MAX_WIDTH}px`}
+                collapsible
+                collapsedSize={0}
+                onResize={(size) => {
+                  if (size.inPixels > 0) {
+                    persistSecondarySidebarWidth(size.inPixels);
+                  }
+                }}
+              >
+                <div className="h-full min-h-0 border-l border-border/60 bg-card" />
               </ResizablePanel>
             </ResizablePanelGroup>
           </main>

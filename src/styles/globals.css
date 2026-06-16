@@ -191,51 +191,11 @@ html[data-chrome="borderless"] #settings-root {
   background: var(--background);
 }
 
-/*
- * xterm.js overrides — kept outside @layer so they win against the addon's
- * own stylesheet (which is not in any layer and would otherwise override).
- *
- * Newer xterm renders scrollbars as real <div class="scrollbar vertical|horizontal">
- * children rather than relying on native overflow scrollbars. Both code paths exist
- * across versions, so we hide both.
- */
-.xterm .scrollbar,
-.xterm .scrollbar.vertical,
-.xterm .scrollbar.horizontal {
-  display: none !important;
-  visibility: hidden !important;
-  width: 0 !important;
-  height: 0 !important;
-  pointer-events: none !important;
-}
-.xterm .xterm-viewport,
-.xterm-viewport {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
-}
-.xterm .xterm-viewport::-webkit-scrollbar,
-.xterm-viewport::-webkit-scrollbar {
-  width: 0 !important;
-  height: 0 !important;
-  display: none !important;
-}
 .xterm,
 .xterm-screen,
 .xterm:focus,
 .xterm.focus {
   outline: none !important;
-}
-
-.cm-editor,
-.cm-scroller {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
-}
-.cm-editor::-webkit-scrollbar,
-.cm-scroller::-webkit-scrollbar {
-  width: 0 !important;
-  height: 0 !important;
-  display: none !important;
 }
 
 body {
@@ -298,22 +258,52 @@ textarea,
   display: none !important;
 }
 
-/* Kill native scrollbars everywhere by default — Linux/Windows ship chunky
- * Chromium bars that break the chrome, and macOS WKWebView flashes its overlay
- * scrollbar briefly during layout transitions (AI panel open, pane split,
- * window resize) which looks like a glitch. Visible scroll affordances are
- * provided per-region via shadcn <ScrollArea>. */
+:root {
+  --terax-scrollbar-size: 10px;
+  --terax-scrollbar-thumb: color-mix(
+    in srgb,
+    var(--foreground) 24%,
+    transparent
+  );
+  --terax-scrollbar-thumb-hover: color-mix(
+    in srgb,
+    var(--foreground) 36%,
+    transparent
+  );
+}
+
 html,
 html *,
 html *::before,
 html *::after {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--terax-scrollbar-thumb) transparent;
 }
 html *::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  width: var(--terax-scrollbar-size);
+  height: var(--terax-scrollbar-size);
+}
+html *::-webkit-scrollbar-track {
+  background: transparent;
+}
+html *::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--terax-scrollbar-thumb);
+  background-clip: content-box;
+}
+html *::-webkit-scrollbar-thumb:hover {
+  background: var(--terax-scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+html *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.xterm .xterm-viewport,
+.xterm-viewport,
+.cm-editor,
+.cm-scroller {
+  scrollbar-gutter: stable both-edges;
 }
 
 /* Motion tokens. Reduced-motion zeroes the durations as a global snap. */

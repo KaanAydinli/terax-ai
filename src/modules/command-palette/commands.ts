@@ -15,6 +15,7 @@ import {
   Search01Icon,
   Settings01Icon,
   SidebarLeftIcon,
+  SidebarRightIcon,
   SourceCodeIcon,
   SparklesIcon,
   TerminalIcon,
@@ -51,6 +52,7 @@ export type CommandPaletteActionContext = {
   focusSearch: () => void;
   focusExplorerSearch: () => void;
   toggleSidebar: () => void;
+  toggleSecondarySidebar: () => void;
   toggleAi: () => void;
   askAiSelection: () => void;
   openSettings: () => void;
@@ -272,6 +274,15 @@ export function createCommandItems(
       icon: SidebarLeftIcon,
       shortcutId: "sidebar.toggle",
       run: ctx.toggleSidebar,
+    },
+    {
+      id: "secondarySidebar.toggle",
+      title: "Toggle secondary sidebar",
+      group: "View",
+      keywords: ["sidebar", "secondary", "right", "panel"],
+      icon: SidebarRightIcon,
+      shortcutId: "secondarySidebar.toggle",
+      run: ctx.toggleSecondarySidebar,
     },
     {
       id: "ai.toggle",

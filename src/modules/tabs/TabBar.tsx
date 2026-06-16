@@ -149,7 +149,7 @@ export function TabBar({
     <div
       ref={scrollRef}
       data-tauri-drag-region
-      className="min-w-0 shrink overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="min-w-0 shrink overflow-x-auto"
     >
       <div className="flex w-max items-center gap-0.5">
         <Tabs

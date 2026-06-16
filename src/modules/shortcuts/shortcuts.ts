@@ -39,6 +39,7 @@ export type ShortcutId =
   | "ai.askSelection"
   | "settings.open"
   | "sidebar.toggle"
+  | "secondarySidebar.toggle"
   | "editor.undo"
   | "editor.redo";
 
@@ -248,13 +249,13 @@ export const SHORTCUTS: Shortcut[] = [
     id: "sidebar.toggle",
     label: "Toggle file explorer",
     group: "View",
-    // Plain Mod+B toggles the sidebar everywhere EXCEPT a focused terminal,
-    // where it's handed to the shell / Claude Code (its "run in background"
-    // key). Mod+Shift+B always toggles, including from inside a terminal.
-    defaultBindings: [
-      { [MOD_PROP]: true, key: "b" },
-      { [MOD_PROP]: true, shift: true, key: "b" },
-    ],
+    defaultBindings: [{ [MOD_PROP]: true, key: "b" }],
+  },
+  {
+    id: "secondarySidebar.toggle",
+    label: "Toggle secondary sidebar",
+    group: "View",
+    defaultBindings: [{ [MOD_PROP]: true, shift: true, key: "b" }],
   },
   {
     id: "explorer.focus",
