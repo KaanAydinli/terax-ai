@@ -29,11 +29,14 @@ type State = {
   ) => void;
   create: (input: CreateInput) => SpaceMeta;
   rename: (id: string, name: string) => void;
+  setRoot: (id: string, root: string | null) => void;
   setColor: (id: string, color: number | undefined) => void;
   reorder: (orderedIds: string[]) => void;
   remove: (id: string) => string | null;
   setActive: (id: string) => void;
 };
+
+let spacesSaveQueue: Promise<void> = Promise.resolve();
 
 export const useSpaces = create<State>((set, get) => ({
   spaces: [],
@@ -67,6 +70,20 @@ export const useSpaces = create<State>((set, get) => ({
     );
     set({ spaces });
     void saveSpacesList(spaces);
+  },
+
+  setRoot: (id, root) => {
+    let changed = false;
+    const spaces = get().spaces.map((s) => {
+      if (s.id !== id || s.root === root) return s;
+      changed = true;
+      return { ...s, root, updatedAt: Date.now() };
+    });
+    if (!changed) return;
+    set({ spaces });
+    spacesSaveQueue = spacesSaveQueue
+      .catch(() => undefined)
+      .then(() => saveSpacesList(spaces));
   },
 
   setColor: (id, color) => {

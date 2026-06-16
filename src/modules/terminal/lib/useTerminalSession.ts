@@ -1,6 +1,7 @@
 import { ensureMonoFontsLoaded } from "@/lib/fonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
+  currentWorkspaceEnv,
   getSshDefaultRoot,
   getSshHome,
   LOCAL_WORKSPACE,
@@ -740,18 +741,44 @@ function deliverPtyBytes(leafId: number, bytes: Uint8Array): void {
 
 const SPAWN_RETRY_DELAY_MS = 250;
 
+async function resolveSpawnCwd(cwd: string | undefined): Promise<string | undefined> {
+  const trimmed = cwd?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const stat = await invoke<FileStat>("fs_stat", {
+      path: trimmed,
+      workspace: currentWorkspaceEnv(),
+    });
+    return stat.kind === "dir" ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isCwdAccessError(e: unknown): boolean {
+  const message = String(e);
+  return (
+    message.includes("cwd not accessible") ||
+    message.includes("cwd is not a directory")
+  );
+}
+
 async function openPtyWithRetry(
   leafId: number,
   s: Session,
   cwd: string | undefined,
 ): Promise<PtySession> {
+  const spawnCwd = await resolveSpawnCwd(cwd);
   try {
-    return await openPtyForSession(leafId, s, cwd);
+    return await openPtyForSession(leafId, s, spawnCwd);
   } catch (e) {
+    if (spawnCwd && isCwdAccessError(e)) {
+      return await openPtyForSession(leafId, s, undefined);
+    }
     console.error("[terax] openPty failed, retrying once:", e);
     await new Promise((r) => setTimeout(r, SPAWN_RETRY_DELAY_MS));
     if (s.disposed) throw e;
-    return openPtyForSession(leafId, s, cwd);
+    return openPtyForSession(leafId, s, spawnCwd);
   }
 }
 

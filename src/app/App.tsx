@@ -120,6 +120,19 @@ function normalizeTerminalAgent(
   return null;
 }
 
+function comparablePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const stripped =
+    normalized === "/" ? normalized : normalized.replace(/\/+$/, "");
+  return /^[A-Za-z]:/.test(stripped) ? stripped.toLowerCase() : stripped;
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const base = comparablePath(parent);
+  const target = comparablePath(child);
+  return target === base || target.startsWith(`${base}/`);
+}
+
 export default function App() {
   const launchDir = getLaunchDir();
   const launchDirExplicit = isLaunchDirExplicit();
@@ -373,7 +386,7 @@ export default function App() {
     cancelBatchClose,
     confirmDeleteClose,
     cancelDeleteClose,
-    handlePathDeleted,
+    handlePathDeleted: handleDeletedEditorTabs,
   } = useTabCloseGuards({ tabs, disposeTab });
 
   useEffect(() => {
@@ -554,6 +567,28 @@ export default function App() {
       }
     },
     [tabs, updateTab],
+  );
+
+  const handlePathDeleted = useCallback(
+    (path: string) => {
+      handleDeletedEditorTabs(path);
+
+      const fallback = [launchCwd, home].find(
+        (candidate): candidate is string =>
+          !!candidate && !pathContains(path, candidate),
+      );
+      if (!fallback) return;
+
+      void native.workspaceAuthorize(fallback).catch(() => undefined);
+      const { spaces, setRoot } = useSpaces.getState();
+      for (const space of spaces) {
+        if (space.root && pathContains(path, space.root)) {
+          setRoot(space.id, fallback);
+        }
+      }
+
+    },
+    [handleDeletedEditorTabs, home, launchCwd],
   );
 
   const activeTerminalLeafCwd =
