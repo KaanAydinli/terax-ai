@@ -188,11 +188,14 @@ export default function App() {
 
   const activeSpaceId = useSpaces((s) => s.activeId);
   const spacesHydrated = useSpaces((s) => s.hydrated);
+  const prefsHydrated = usePreferencesStore((s) => s.hydrated);
+  const restoreWorkspaces = usePreferencesStore((s) => s.restoreWorkspaces);
 
   useSpacesBoot({
-    ready: launchCwdResolved,
+    ready: launchCwdResolved && prefsHydrated,
     launchCwd,
     home,
+    restoreWorkspaces,
     allocId,
     replaceTabs,
     markBooted,
@@ -203,7 +206,7 @@ export default function App() {
     tabs,
     activeId,
     activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
-    enabled: spacesHydrated,
+    enabled: spacesHydrated && restoreWorkspaces,
   });
 
   const prevSpaceRef = useRef(activeSpaceId);

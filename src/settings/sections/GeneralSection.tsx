@@ -26,6 +26,7 @@ import {
   setEditorAutoSaveDelay,
   setExplorerGitDecorations,
   setRestoreWindowState,
+  setRestoreWorkspaces,
   setShowHidden,
   setTerminalFontFamily,
   setTerminalLetterSpacing,
@@ -71,6 +72,7 @@ export function GeneralSection() {
 
   const autostart = usePreferencesStore((s) => s.autostart);
   const restoreWindowState = usePreferencesStore((s) => s.restoreWindowState);
+  const restoreWorkspaces = usePreferencesStore((s) => s.restoreWorkspaces);
   const vimMode = usePreferencesStore((s) => s.vimMode);
   const editorAutoSave = usePreferencesStore((s) => s.editorAutoSave);
   const editorAutoSaveDelay = usePreferencesStore((s) => s.editorAutoSaveDelay);
@@ -369,6 +371,15 @@ export function GeneralSection() {
               onCheckedChange={(v) => void setRestoreWindowState(v)}
             />
           </SettingRow>
+          <SettingRow
+            title="Restore workspaces"
+            description="Reopen the last workspace tabs and directories. Missing directories fall back to the launch directory or home."
+          >
+            <Switch
+              checked={restoreWorkspaces}
+              onCheckedChange={(v) => void setRestoreWorkspaces(v)}
+            />
+          </SettingRow>
         </div>
       </div>
     </div>
@@ -477,4 +488,3 @@ function AutoSaveDelayInput({
     </SettingRow>
   );
 }
-
