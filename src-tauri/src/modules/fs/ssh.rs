@@ -17,6 +17,10 @@ const PY_HELPER: &str = r#"
 import fnmatch, json, os, re, shutil, sys
 def arg(i):
     return bytes.fromhex(sys.argv[i]).decode("utf-8", "surrogateescape")
+def bool_arg(i):
+    return arg(i) == "1"
+def int_arg(i):
+    return int(arg(i))
 def j(value):
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
 def kind_of(path):
@@ -146,7 +150,7 @@ pub fn read_dir_in(
 ) -> Result<Vec<DirEntry>, String> {
     let body = r#"
 path = arg(1)
-show_hidden = sys.argv[2] == "1"
+show_hidden = bool_arg(2)
 items = []
 with os.scandir(path) as it:
     for e in it:
@@ -331,7 +335,7 @@ pub fn list_subdirs(
 ) -> Result<Vec<String>, String> {
     let body = r#"
 path = arg(1)
-show_hidden = sys.argv[2] == "1"
+show_hidden = bool_arg(2)
 items = []
 with os.scandir(path) as it:
     for e in it:
@@ -359,8 +363,8 @@ pub fn search(
     let body = r#"
 root = arg(1)
 query = arg(2).lower()
-limit = int(sys.argv[3])
-show_hidden = sys.argv[4] == "1"
+limit = int_arg(3)
+show_hidden = bool_arg(4)
 hits = []
 scanned = 0
 truncated = False
@@ -405,9 +409,9 @@ pub fn list_files(
 ) -> Result<ListFilesResult, String> {
     let body = r#"
 root = arg(1)
-limit = int(sys.argv[2])
-max_depth = int(sys.argv[3])
-show_hidden = sys.argv[4] == "1"
+limit = int_arg(2)
+max_depth = int_arg(3)
+show_hidden = bool_arg(4)
 files = []
 scanned = 0
 truncated = False
@@ -460,9 +464,9 @@ pub fn grep(
 root = arg(1)
 pattern = arg(2)
 globs = json.loads(arg(3))
-flags = re.IGNORECASE if sys.argv[4] == "1" else 0
-cap = int(sys.argv[5])
-literal = sys.argv[6] == "1"
+flags = re.IGNORECASE if bool_arg(4) else 0
+cap = int_arg(5)
+literal = bool_arg(6)
 rx = re.compile(re.escape(pattern) if literal else pattern, flags)
 hits = []
 files_scanned = 0
@@ -524,7 +528,7 @@ pub fn glob(
     let body = r#"
 root = arg(1)
 pattern = arg(2)
-cap = int(sys.argv[3])
+cap = int_arg(3)
 hits = []
 truncated = False
 for base, dirs, names in os.walk(root, topdown=True, followlinks=False):
