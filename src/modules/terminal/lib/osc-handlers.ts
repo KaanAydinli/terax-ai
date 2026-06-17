@@ -87,12 +87,14 @@ export function registerOsc52ClipboardHandler(
   term: Terminal,
   writeClipboard: ClipboardWriter = writeSystemClipboard,
 ): () => void {
-  const d = term.parser.registerOscHandler(52, async (data) => {
+  const d = term.parser.registerOscHandler(52, (data) => {
     const text = parseOsc52Clipboard(data);
     if (text === null) return true;
-    try {
-      await writeClipboard(text);
-    } catch {}
+    queueMicrotask(() => {
+      try {
+        void Promise.resolve(writeClipboard(text)).catch(() => {});
+      } catch {}
+    });
     return true;
   });
   return () => d.dispose();
@@ -114,7 +116,7 @@ function parseOsc52Clipboard(data: string): string | null {
   const parts = data.split(";");
   if (parts.length < 2) return null;
   const selection = parts[0] || "c";
-  if (!selection.includes("c") && !selection.includes("p")) return null;
+  if (!selection.includes("c")) return null;
   const encoded = parts.slice(1).join(";");
   if (!encoded || encoded === "?") return null;
   if (encoded.length > Math.ceil((MAX_OSC52_CLIPBOARD_BYTES * 4) / 3) + 4) {

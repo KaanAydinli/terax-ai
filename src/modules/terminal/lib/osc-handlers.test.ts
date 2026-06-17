@@ -28,6 +28,10 @@ function makeFakeTerm() {
   return { term, handlers };
 }
 
+async function flushClipboardQueue() {
+  await Promise.resolve();
+}
+
 describe("OSC 7 cwd handler — gated by OSC 133 in-command state", () => {
   it("accepts OSC 7 when no command is running", () => {
     const { term, handlers } = makeFakeTerm();
@@ -132,8 +136,10 @@ describe("OSC 52 clipboard handler", () => {
     const writeClipboard = vi.fn();
     registerOsc52ClipboardHandler(term, writeClipboard);
 
-    await handlers.get(52)?.("c;SGVsbG8=");
+    const result = handlers.get(52)?.("c;SGVsbG8=");
+    await flushClipboardQueue();
 
+    expect(result).toBe(true);
     expect(writeClipboard).toHaveBeenCalledWith("Hello");
   });
 
@@ -142,9 +148,34 @@ describe("OSC 52 clipboard handler", () => {
     const writeClipboard = vi.fn();
     registerOsc52ClipboardHandler(term, writeClipboard);
 
-    await handlers.get(52)?.("c;8J+YgCBtZXJoYWJh");
+    handlers.get(52)?.("c;8J+YgCBtZXJoYWJh");
+    await flushClipboardQueue();
 
     expect(writeClipboard).toHaveBeenCalledWith("😀 merhaba");
+  });
+
+  it("does not block the parser on clipboard writes", async () => {
+    const { term, handlers } = makeFakeTerm();
+    const writeClipboard = vi.fn(() => new Promise<void>(() => {}));
+    registerOsc52ClipboardHandler(term, writeClipboard);
+
+    const result = handlers.get(52)?.("c;SGVsbG8=");
+
+    expect(result).toBe(true);
+    expect(writeClipboard).not.toHaveBeenCalled();
+    await flushClipboardQueue();
+    expect(writeClipboard).toHaveBeenCalledWith("Hello");
+  });
+
+  it("ignores primary-selection-only payloads", async () => {
+    const { term, handlers } = makeFakeTerm();
+    const writeClipboard = vi.fn();
+    registerOsc52ClipboardHandler(term, writeClipboard);
+
+    await handlers.get(52)?.("p;SGVsbG8=");
+    await flushClipboardQueue();
+
+    expect(writeClipboard).not.toHaveBeenCalled();
   });
 
   it("ignores clipboard queries and malformed payloads", async () => {
@@ -155,6 +186,7 @@ describe("OSC 52 clipboard handler", () => {
     await handlers.get(52)?.("c;?");
     await handlers.get(52)?.("c;not base64!");
     await handlers.get(52)?.("s;SGVsbG8=");
+    await flushClipboardQueue();
 
     expect(writeClipboard).not.toHaveBeenCalled();
   });
@@ -165,6 +197,7 @@ describe("OSC 52 clipboard handler", () => {
     registerOsc52ClipboardHandler(term, writeClipboard);
 
     await handlers.get(52)?.(`c;${"A".repeat(1_398_110)}`);
+    await flushClipboardQueue();
 
     expect(writeClipboard).not.toHaveBeenCalled();
   });
