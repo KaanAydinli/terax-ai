@@ -1,6 +1,5 @@
 import { ensureMonoFontsLoaded } from "@/lib/fonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { currentWorkspaceEnv } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
 import type { SearchAddon } from "@xterm/addon-search";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -466,24 +465,6 @@ function deliverPtyBytes(leafId: number, bytes: Uint8Array): void {
 
 const SPAWN_RETRY_DELAY_MS = 250;
 
-type FileStat = {
-  kind: "file" | "dir" | "symlink";
-};
-
-async function resolveSpawnCwd(cwd: string | undefined): Promise<string | undefined> {
-  const trimmed = cwd?.trim();
-  if (!trimmed) return undefined;
-  try {
-    const stat = await invoke<FileStat>("fs_stat", {
-      path: trimmed,
-      workspace: currentWorkspaceEnv(),
-    });
-    return stat.kind === "dir" ? trimmed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function isCwdAccessError(e: unknown): boolean {
   const message = String(e);
   return (
@@ -497,17 +478,16 @@ async function openPtyWithRetry(
   s: Session,
   cwd: string | undefined,
 ): Promise<PtySession> {
-  const spawnCwd = await resolveSpawnCwd(cwd);
   try {
-    return await openPtyForSession(leafId, s, spawnCwd);
+    return await openPtyForSession(leafId, s, cwd);
   } catch (e) {
-    if (spawnCwd && isCwdAccessError(e)) {
-      return await openPtyForSession(leafId, s, undefined);
+    if (cwd && isCwdAccessError(e)) {
+      return openPtyForSession(leafId, s, undefined);
     }
     console.error("[terax] openPty failed, retrying once:", e);
     await new Promise((r) => setTimeout(r, SPAWN_RETRY_DELAY_MS));
     if (s.disposed) throw e;
-    return openPtyForSession(leafId, s, spawnCwd);
+    return openPtyForSession(leafId, s, cwd);
   }
 }
 

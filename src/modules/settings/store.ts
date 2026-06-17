@@ -121,7 +121,6 @@ export type Preferences = {
   customInstructions: string;
   autostart: boolean;
   restoreWindowState: boolean;
-  restoreWorkspaces: boolean;
   autocompleteEnabled: boolean;
   autocompleteProvider: AutocompleteProviderId;
   autocompleteModelId: string;
@@ -170,7 +169,6 @@ const KEY_EDITOR_THEME = "editorTheme";
 const KEY_CUSTOM_INSTRUCTIONS = "customInstructions";
 const KEY_AUTOSTART = "autostart";
 const KEY_RESTORE_WINDOW = "restoreWindowState";
-const KEY_RESTORE_WORKSPACES = "restoreWorkspaces";
 const KEY_AUTOCOMPLETE_ENABLED = "autocompleteEnabled";
 const KEY_AUTOCOMPLETE_PROVIDER = "autocompleteProvider";
 const KEY_AUTOCOMPLETE_MODEL = "autocompleteModelId";
@@ -234,7 +232,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   customInstructions: "",
   autostart: false,
   restoreWindowState: true,
-  restoreWorkspaces: true,
   autocompleteEnabled: false,
   autocompleteProvider: "cerebras",
   autocompleteModelId: DEFAULT_AUTOCOMPLETE_MODEL.cerebras ?? "",
@@ -323,9 +320,6 @@ export async function loadPreferences(): Promise<Preferences> {
     restoreWindowState:
       get<boolean>(KEY_RESTORE_WINDOW) ??
       DEFAULT_PREFERENCES.restoreWindowState,
-    restoreWorkspaces:
-      get<boolean>(KEY_RESTORE_WORKSPACES) ??
-      DEFAULT_PREFERENCES.restoreWorkspaces,
     autocompleteEnabled:
       get<boolean>(KEY_AUTOCOMPLETE_ENABLED) ??
       DEFAULT_PREFERENCES.autocompleteEnabled,
@@ -486,10 +480,6 @@ export async function setAutostart(value: boolean): Promise<void> {
 
 export async function setRestoreWindowState(value: boolean): Promise<void> {
   await writePref(KEY_RESTORE_WINDOW, value);
-}
-
-export async function setRestoreWorkspaces(value: boolean): Promise<void> {
-  await writePref(KEY_RESTORE_WORKSPACES, value);
 }
 
 export async function setAutocompleteEnabled(value: boolean): Promise<void> {
@@ -681,7 +671,6 @@ export async function onPreferencesChange(
     [KEY_CUSTOM_INSTRUCTIONS]: "customInstructions",
     [KEY_AUTOSTART]: "autostart",
     [KEY_RESTORE_WINDOW]: "restoreWindowState",
-    [KEY_RESTORE_WORKSPACES]: "restoreWorkspaces",
     [KEY_AUTOCOMPLETE_ENABLED]: "autocompleteEnabled",
     [KEY_AUTOCOMPLETE_PROVIDER]: "autocompleteProvider",
     [KEY_AUTOCOMPLETE_MODEL]: "autocompleteModelId",
