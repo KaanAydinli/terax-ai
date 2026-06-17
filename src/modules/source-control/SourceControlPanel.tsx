@@ -34,6 +34,7 @@ import { IS_MAC } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import {
   type GitBranchEntry,
+  type GitCommitFileChange,
   type GitLogEntry,
   native,
 } from "@/modules/ai/lib/native";
@@ -99,6 +100,7 @@ type Props = {
     originalPath: string | null;
     title?: string;
   }) => void;
+  onOpenCommitFile?: (input: CommitFileDiffInput) => void;
   onOpenFile?: (absolutePath: string) => void;
 };
 
@@ -114,6 +116,7 @@ const ROW_HEIGHTS = {
 const GRAPH_PAGE_SIZE = 40;
 const GRAPH_ROW_HEIGHT = 30;
 const GRAPH_NEAR_BOTTOM_PX = 180;
+const GRAPH_FILES_CACHE_LIMIT = 60;
 const MIN_GRAPH_HEIGHT = 140;
 const MAX_GRAPH_HEIGHT = 520;
 
@@ -121,6 +124,20 @@ type RowDescriptor =
   | { kind: "banner-diverged"; key: string }
   | { kind: "list-header"; key: string; count: number }
   | { kind: "entry"; key: string; entry: SourceControlFileEntry };
+
+type CommitFileDiffInput = {
+  repoRoot: string;
+  sha: string;
+  shortSha: string;
+  subject: string;
+  path: string;
+  originalPath: string | null;
+};
+
+type CommitFilesEntry =
+  | { state: "loading" }
+  | { state: "loaded"; files: GitCommitFileChange[] }
+  | { state: "error"; error: string };
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -180,6 +197,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   open,
   sourceControl,
   onOpenDiff,
+  onOpenCommitFile,
   onOpenFile,
 }: Props) {
   const scm = useSourceControlPanel(open, sourceControl, onOpenDiff);
@@ -1041,6 +1059,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                 <InlineCommitGraph
                   repoRoot={scm.status.repoRoot}
                   refreshKey={graphRefreshKey}
+                  onOpenCommitFile={onOpenCommitFile}
                 />
               </div>
             ) : null}
@@ -1115,6 +1134,7 @@ function SectionToggleHeader({
 type InlineCommitGraphProps = {
   repoRoot: string;
   refreshKey: string | null;
+  onOpenCommitFile?: (input: CommitFileDiffInput) => void;
 };
 
 function compactGraphDate(secs: number): string {
@@ -1129,6 +1149,7 @@ function compactGraphDate(secs: number): string {
 const InlineCommitGraph = memo(function InlineCommitGraph({
   repoRoot,
   refreshKey,
+  onOpenCommitFile,
 }: InlineCommitGraphProps) {
   const [commits, setCommits] = useState<GitLogEntry[]>([]);
   const [loadStatus, setLoadStatus] = useState<
@@ -1136,8 +1157,13 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
   >("idle");
   const [error, setError] = useState<string | null>(null);
   const [endReached, setEndReached] = useState(false);
+  const [expandedShas, setExpandedShas] = useState<Set<string>>(new Set());
+  const [filesBySha, setFilesBySha] = useState<Map<string, CommitFilesEntry>>(
+    new Map(),
+  );
   const requestIdRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const filesInflightRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const graphCacheRef = useRef<{
     rows: GraphRow[];
@@ -1204,14 +1230,6 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
     return { graphByCommit: cache.byCommit, maxLaneCount: cache.maxLaneCount };
   }, [commits]);
 
-  const virtualizer = useVirtualizer({
-    count: commits.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => GRAPH_ROW_HEIGHT,
-    overscan: 8,
-    getItemKey: (index) => commits[index]?.sha ?? index,
-  });
-
   const loadInitial = useCallback(async () => {
     const requestId = ++requestIdRef.current;
     setLoadStatus("initial");
@@ -1229,6 +1247,62 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
       setLoadStatus("error");
     }
   }, [repoRoot]);
+
+  const fetchFiles = useCallback(
+    async (sha: string) => {
+      if (filesInflightRef.current.has(sha)) return;
+      const current = filesBySha.get(sha);
+      if (current && current.state !== "error") return;
+      filesInflightRef.current.add(sha);
+      setFilesBySha((prev) => {
+        const next = new Map(prev);
+        next.set(sha, { state: "loading" });
+        return next;
+      });
+      try {
+        const files = await native.gitCommitFiles(repoRoot, sha);
+        setFilesBySha((prev) => {
+          const next = new Map(prev);
+          next.set(sha, { state: "loaded", files });
+          while (next.size > GRAPH_FILES_CACHE_LIMIT) {
+            const oldest = next.keys().next().value;
+            if (oldest === undefined || oldest === sha) break;
+            next.delete(oldest);
+          }
+          return next;
+        });
+      } catch (err) {
+        setFilesBySha((prev) => {
+          const next = new Map(prev);
+          next.set(sha, { state: "error", error: normalizeError(err) });
+          return next;
+        });
+      } finally {
+        filesInflightRef.current.delete(sha);
+      }
+    },
+    [filesBySha, repoRoot],
+  );
+
+  const estimateGraphRowSize = useCallback(
+    (index: number) => {
+      const commit = commits[index];
+      if (!commit || !expandedShas.has(commit.sha)) return GRAPH_ROW_HEIGHT;
+      const entry = filesBySha.get(commit.sha);
+      if (entry?.state !== "loaded") return GRAPH_ROW_HEIGHT + 42;
+      if (entry.files.length === 0) return GRAPH_ROW_HEIGHT + 40;
+      return GRAPH_ROW_HEIGHT + 27 + Math.min(entry.files.length, 7) * 28;
+    },
+    [commits, expandedShas, filesBySha],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: commits.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: estimateGraphRowSize,
+    overscan: 8,
+    getItemKey: (index) => commits[index]?.sha ?? index,
+  });
 
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current || endReached || loadStatus !== "idle") return;
@@ -1259,8 +1333,45 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
   useEffect(() => {
     void refreshKey;
     setCommits([]);
+    setExpandedShas(new Set());
+    setFilesBySha(new Map());
+    filesInflightRef.current.clear();
     void loadInitial();
   }, [loadInitial, refreshKey]);
+
+  const toggleCommit = useCallback(
+    (commit: GitLogEntry) => {
+      if (expandedShas.has(commit.sha)) {
+        setExpandedShas((prev) => {
+          const next = new Set(prev);
+          next.delete(commit.sha);
+          return next;
+        });
+        return;
+      }
+      setExpandedShas((prev) => {
+        const next = new Set(prev);
+        next.add(commit.sha);
+        return next;
+      });
+      void fetchFiles(commit.sha);
+    },
+    [expandedShas, fetchFiles],
+  );
+
+  const openCommitFile = useCallback(
+    (commit: GitLogEntry, file: GitCommitFileChange) => {
+      onOpenCommitFile?.({
+        repoRoot,
+        sha: commit.sha,
+        shortSha: commit.shortSha,
+        subject: commit.subject,
+        path: file.path,
+        originalPath: file.originalPath,
+      });
+    },
+    [onOpenCommitFile, repoRoot],
+  );
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -1325,18 +1436,25 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
           return (
             <div
               key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
               style={{
                 position: "absolute",
                 top: 0,
                 left: 0,
                 width: "100%",
-                height: virtualRow.size,
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
               <InlineCommitRow
                 commit={commit}
                 graphRow={graphByCommit.get(commit.sha) ?? null}
+                expanded={expandedShas.has(commit.sha)}
+                filesEntry={filesBySha.get(commit.sha) ?? null}
+                filesClickable={!!onOpenCommitFile}
+                onToggle={() => toggleCommit(commit)}
+                onOpenFile={(file) => openCommitFile(commit, file)}
+                onRetryFiles={() => void fetchFiles(commit.sha)}
               />
             </div>
           );
@@ -1373,15 +1491,37 @@ const InlineCommitGraph = memo(function InlineCommitGraph({
 type InlineCommitRowProps = {
   commit: GitLogEntry;
   graphRow: GraphRow | null;
+  expanded: boolean;
+  filesEntry: CommitFilesEntry | null;
+  filesClickable: boolean;
+  onToggle: () => void;
+  onOpenFile: (file: GitCommitFileChange) => void;
+  onRetryFiles: () => void;
 };
 
 const InlineCommitRow = memo(function InlineCommitRow({
   commit,
   graphRow,
+  expanded,
+  filesEntry,
+  filesClickable,
+  onToggle,
+  onOpenFile,
+  onRetryFiles,
 }: InlineCommitRowProps) {
   const total = commit.insertions + commit.deletions;
   const visibleLaneCount = graphRow?.laneCount ?? 1;
+  const railColumnWidth = Math.max(18, railWidth(visibleLaneCount) - 6);
   const [copied, setCopied] = useState(false);
+  const handleToggleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onToggle();
+    },
+    [onToggle],
+  );
 
   useEffect(() => {
     if (!copied) return;
@@ -1390,74 +1530,248 @@ const InlineCommitRow = memo(function InlineCommitRow({
   }, [copied]);
 
   return (
-    <div className="grid h-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 border-b border-border/25 pr-2 text-left transition-colors hover:bg-accent/25">
+    <div className="min-w-0 border-b border-border/25 transition-colors hover:bg-accent/20">
+      {/* biome-ignore lint/a11y/useSemanticElements: The row contains a copy action button. */}
       <div
-        className="flex justify-start pl-1"
-        style={{ width: Math.max(18, railWidth(visibleLaneCount) - 6) }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={onToggle}
+        onKeyDown={handleToggleKeyDown}
+        className="grid min-h-[30px] w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 pr-2 text-left focus-visible:bg-accent/35 focus-visible:outline-none"
       >
-        {graphRow ? (
-          <GraphRail
-            row={graphRow}
-            rowHeight={GRAPH_ROW_HEIGHT}
-            maxLaneCount={visibleLaneCount}
-          />
-        ) : null}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-[11.5px] font-medium leading-tight text-foreground">
-          {commit.subject || (
-            <span className="text-muted-foreground">(no subject)</span>
+        <div
+          className="flex justify-start pl-1"
+          style={{ width: railColumnWidth }}
+        >
+          {graphRow ? (
+            <GraphRail
+              row={graphRow}
+              rowHeight={GRAPH_ROW_HEIGHT}
+              maxLaneCount={visibleLaneCount}
+            />
+          ) : null}
+        </div>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1">
+            <HugeiconsIcon
+              icon={expanded ? ArrowDown01Icon : ArrowRight01Icon}
+              size={10}
+              strokeWidth={2.2}
+              className="shrink-0 text-muted-foreground/70"
+            />
+            <div className="truncate text-[11.5px] font-medium leading-tight text-foreground">
+              {commit.subject || (
+                <span className="text-muted-foreground">(no subject)</span>
+              )}
+            </div>
+          </div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[9.5px] leading-none text-muted-foreground">
+            <span className="font-mono tabular-nums">{commit.shortSha}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Copy commit id ${commit.shortSha}`}
+                  className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void copyToClipboard(commit.sha).then(() =>
+                      setCopied(true),
+                    );
+                  }}
+                >
+                  <HugeiconsIcon
+                    icon={copied ? CheckmarkCircle01Icon : Copy01Icon}
+                    size={10}
+                    strokeWidth={1.9}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                className={cn(
+                  SOURCE_CONTROL_TOOLTIP_CLASS,
+                  "px-2 py-1 text-[10.5px]",
+                )}
+              >
+                {copied ? "Copied" : "Copy commit id"}
+              </TooltipContent>
+            </Tooltip>
+            <span className="size-[3px] rounded-full bg-muted-foreground/35" />
+            <span className="truncate">{commit.author || "Unknown"}</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-0.5 text-[9.5px] leading-none text-muted-foreground">
+          <span className="font-mono tabular-nums">
+            {compactGraphDate(commit.timestampSecs)}
+          </span>
+          {total > 0 ? (
+            <span className="font-mono tabular-nums">
+              <span className="text-emerald-500">+{commit.insertions}</span>
+              <span className="ml-1 text-rose-500">-{commit.deletions}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground/45">
+              {commit.filesChanged} files
+            </span>
           )}
         </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[9.5px] leading-none text-muted-foreground">
-          <span className="font-mono tabular-nums">{commit.shortSha}</span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={`Copy commit id ${commit.shortSha}`}
-                className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none"
-                onClick={() => {
-                  void copyToClipboard(commit.sha).then(() => setCopied(true));
-                }}
-              >
-                <HugeiconsIcon
-                  icon={copied ? CheckmarkCircle01Icon : Copy01Icon}
-                  size={10}
-                  strokeWidth={1.9}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent
-              side="top"
-              className={cn(
-                SOURCE_CONTROL_TOOLTIP_CLASS,
-                "px-2 py-1 text-[10.5px]",
-              )}
-            >
-              {copied ? "Copied" : "Copy commit id"}
-            </TooltipContent>
-          </Tooltip>
-          <span className="size-[3px] rounded-full bg-muted-foreground/35" />
-          <span className="truncate">{commit.author || "Unknown"}</span>
-        </div>
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-[9.5px] leading-none text-muted-foreground">
-        <span className="font-mono tabular-nums">
-          {compactGraphDate(commit.timestampSecs)}
+      {expanded ? (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] bg-background/65 pb-2">
+          <div style={{ width: railColumnWidth }} />
+          <InlineCommitFiles
+            filesEntry={filesEntry}
+            filesClickable={filesClickable}
+            onOpenFile={onOpenFile}
+            onRetry={onRetryFiles}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+function InlineCommitFiles({
+  filesEntry,
+  filesClickable,
+  onOpenFile,
+  onRetry,
+}: {
+  filesEntry: CommitFilesEntry | null;
+  filesClickable: boolean;
+  onOpenFile: (file: GitCommitFileChange) => void;
+  onRetry: () => void;
+}) {
+  if (!filesEntry || filesEntry.state === "loading") {
+    return (
+      <div className="flex items-center gap-2 px-1.5 py-2 text-[10.5px] text-muted-foreground">
+        <Spinner className="size-3" />
+        Loading files...
+      </div>
+    );
+  }
+  if (filesEntry.state === "error") {
+    return (
+      <div className="flex items-center justify-between gap-2 px-1.5 py-2 text-[10.5px] text-destructive">
+        <span className="truncate">{filesEntry.error}</span>
+        <Button
+          size="xs"
+          variant="ghost"
+          className="h-6 cursor-pointer text-[10.5px]"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  if (filesEntry.files.length === 0) {
+    return (
+      <div className="px-1.5 py-2 text-[10.5px] text-muted-foreground">
+        No file changes.
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center justify-between px-1.5 pb-1 pt-1.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/75">
+        <span>Files</span>
+        <span className="rounded-sm bg-muted/55 px-1 py-px text-[9.5px] font-medium normal-case tracking-normal">
+          {filesEntry.files.length}
         </span>
-        {total > 0 ? (
-          <span className="font-mono tabular-nums">
-            <span className="text-emerald-500">+{commit.insertions}</span>
-            <span className="ml-1 text-rose-500">-{commit.deletions}</span>
-          </span>
-        ) : (
-          <span className="text-muted-foreground/45">
-            {commit.filesChanged} files
-          </span>
-        )}
+      </div>
+      <div className="max-h-48 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-gutter:stable]">
+        <ul className="space-y-px">
+          {filesEntry.files.map((file) => (
+            <li key={`${file.status}:${file.originalPath ?? ""}:${file.path}`}>
+              <InlineCommitFileRow
+                file={file}
+                clickable={filesClickable}
+                onOpen={() => onOpenFile(file)}
+              />
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
+  );
+}
+
+const InlineCommitFileRow = memo(function InlineCommitFileRow({
+  file,
+  clickable,
+  onOpen,
+}: {
+  file: GitCommitFileChange;
+  clickable: boolean;
+  onOpen: () => void;
+}) {
+  const fileName = basename(file.path);
+  const dir = dirname(file.path);
+  const iconUrl = fileIconUrl(fileName);
+  return (
+    <button
+      type="button"
+      disabled={!clickable}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+      className={cn(
+        "group flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left transition-colors",
+        clickable
+          ? "cursor-pointer hover:bg-accent/45 focus-visible:bg-accent/45 focus-visible:outline-none"
+          : "cursor-default",
+      )}
+    >
+      {iconUrl ? (
+        <img src={iconUrl} alt="" className="size-3.5 shrink-0" />
+      ) : (
+        <span className="size-3.5 shrink-0" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-baseline gap-1.5 leading-none">
+          <span className="truncate text-[11px] font-medium leading-tight">
+            {fileName}
+          </span>
+          {dir ? (
+            <span className="min-w-0 flex-1 truncate text-[9.5px] text-muted-foreground/75">
+              {dir}
+            </span>
+          ) : null}
+        </div>
+        {file.originalPath ? (
+          <div className="truncate text-[9px] leading-tight text-muted-foreground/60">
+            from {file.originalPath}
+          </div>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-1 text-[9.5px] tabular-nums">
+        {file.isBinary ? (
+          <span className="text-muted-foreground/65">binary</span>
+        ) : (
+          <>
+            {file.added > 0 ? (
+              <span className="text-emerald-500">+{file.added}</span>
+            ) : null}
+            {file.removed > 0 ? (
+              <span className="text-rose-500">-{file.removed}</span>
+            ) : null}
+          </>
+        )}
+      </div>
+      <span
+        className={cn(
+          "inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded px-1 text-[9px] font-bold leading-none text-white",
+          statusAccent(file.status),
+        )}
+        title={file.statusLabel}
+      >
+        {file.status.toUpperCase()}
+      </span>
+    </button>
   );
 });
 
