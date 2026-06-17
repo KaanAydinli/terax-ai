@@ -3,6 +3,7 @@ import type { Terminal } from "@xterm/xterm";
 import {
   createShellIntegrationState,
   registerCwdHandler,
+  registerOsc52ClipboardHandler,
   registerPromptTracker,
 } from "./osc-handlers";
 
@@ -122,5 +123,49 @@ describe("OSC 133 command-state tracking", () => {
     expect(onCommandState).toHaveBeenLastCalledWith(true);
     handlers.get(133)?.("A");
     expect(onCommandState).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("OSC 52 clipboard handler", () => {
+  it("writes decoded clipboard payloads", async () => {
+    const { term, handlers } = makeFakeTerm();
+    const writeClipboard = vi.fn();
+    registerOsc52ClipboardHandler(term, writeClipboard);
+
+    await handlers.get(52)?.("c;SGVsbG8=");
+
+    expect(writeClipboard).toHaveBeenCalledWith("Hello");
+  });
+
+  it("decodes UTF-8 payloads", async () => {
+    const { term, handlers } = makeFakeTerm();
+    const writeClipboard = vi.fn();
+    registerOsc52ClipboardHandler(term, writeClipboard);
+
+    await handlers.get(52)?.("c;8J+YgCBtZXJoYWJh");
+
+    expect(writeClipboard).toHaveBeenCalledWith("😀 merhaba");
+  });
+
+  it("ignores clipboard queries and malformed payloads", async () => {
+    const { term, handlers } = makeFakeTerm();
+    const writeClipboard = vi.fn();
+    registerOsc52ClipboardHandler(term, writeClipboard);
+
+    await handlers.get(52)?.("c;?");
+    await handlers.get(52)?.("c;not base64!");
+    await handlers.get(52)?.("s;SGVsbG8=");
+
+    expect(writeClipboard).not.toHaveBeenCalled();
+  });
+
+  it("ignores oversized payloads", async () => {
+    const { term, handlers } = makeFakeTerm();
+    const writeClipboard = vi.fn();
+    registerOsc52ClipboardHandler(term, writeClipboard);
+
+    await handlers.get(52)?.(`c;${"A".repeat(1_398_110)}`);
+
+    expect(writeClipboard).not.toHaveBeenCalled();
   });
 });
