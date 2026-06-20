@@ -71,6 +71,14 @@ export type MarkdownTab = TabBase & {
   path: string;
 };
 
+export type AudioTab = TabBase & {
+  id: number;
+  kind: "audio";
+  title: string;
+  path: string;
+  mediaType: string;
+};
+
 export type AiDiffStatus = "pending" | "approved" | "rejected";
 
 export type AiDiffTab = TabBase & {
@@ -121,6 +129,7 @@ export type Tab =
   | EditorTab
   | PreviewTab
   | MarkdownTab
+  | AudioTab
   | AiDiffTab
   | GitDiffTab
   | GitHistoryTab
@@ -633,6 +642,32 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     return targetId;
   }, []);
 
+  const openAudioTab = useCallback((path: string) => {
+    let targetId: number | null = null;
+    setTabs((curr) => {
+      const existing = curr.find((t) => t.kind === "audio" && t.path === path);
+      if (existing) {
+        targetId = existing.id;
+        return curr;
+      }
+      const id = nextIdRef.current++;
+      targetId = id;
+      return [
+        ...curr,
+        {
+          id,
+          kind: "audio",
+          spaceId: activeSpaceIdRef.current,
+          title: basename(path),
+          path,
+          mediaType: "audio/wav",
+        } satisfies AudioTab,
+      ];
+    });
+    if (targetId !== null) setActiveId(targetId);
+    return targetId;
+  }, []);
+
   const setMarkdownView = useCallback(
     (id: number, mode: "rendered" | "raw") => {
       setTabs((curr) =>
@@ -863,6 +898,13 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           return {
             ...x,
             ...(patch.title !== undefined && { title: patch.title }),
+          };
+        }
+        if (x.kind === "audio") {
+          return {
+            ...x,
+            ...(patch.title !== undefined && { title: patch.title }),
+            ...(patch.path !== undefined && { path: patch.path }),
           };
         }
         // editor tab: auto-promote from preview the moment the file becomes dirty.
@@ -1117,6 +1159,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     pinTab,
     newPreviewTab,
     newMarkdownTab,
+    openAudioTab,
     setMarkdownView,
     openAiDiffTab,
     openGitDiffTab,

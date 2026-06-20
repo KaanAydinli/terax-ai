@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import { AiDiffStack, EditorStack, GitDiffStack } from "@/modules/editor";
+import { AudioStack } from "@/modules/audio";
 import { GitHistoryStack } from "@/modules/git-history";
 import { MarkdownStack } from "@/modules/markdown";
 import { PreviewStack } from "@/modules/preview";
@@ -66,6 +67,7 @@ export function WorkspaceSurface({
   const isEditorTab = kind === "editor";
   const isPreviewTab = kind === "preview";
   const isMarkdownTab = kind === "markdown";
+  const isAudioTab = kind === "audio";
   const isAiDiffTab = kind === "ai-diff";
   const isGitDiffTab = kind === "git-diff" || kind === "git-commit-file";
   const isGitHistoryTab = kind === "git-history";
@@ -134,6 +136,15 @@ export function WorkspaceSurface({
           activeId={activeId}
           onSetMarkdownView={onSetMarkdownView}
         />
+      </div>
+      <div
+        className={cn(
+          "absolute inset-0 px-3 pt-2 pb-2",
+          !isAudioTab && "invisible pointer-events-none",
+        )}
+        aria-hidden={!isAudioTab}
+      >
+        <AudioStack tabs={tabs} activeId={activeId} />
       </div>
       <div
         className={cn(

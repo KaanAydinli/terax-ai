@@ -263,6 +263,30 @@ with open(path, "rb") as f:
     }
 }
 
+pub fn read_binary_file(
+    workspace: &WorkspaceEnv,
+    path: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, String> {
+    let meta = stat(workspace, path)?;
+    if meta.size > max_bytes {
+        return Err(format!(
+            "file is too large: {} bytes exceeds {} byte limit",
+            meta.size, max_bytes
+        ));
+    }
+    let body = r#"
+path = arg(1)
+with open(path, "rb") as f:
+    while True:
+        chunk = f.read(65536)
+        if not chunk:
+            break
+        sys.stdout.buffer.write(chunk)
+"#;
+    run_python(workspace, body, &[path])
+}
+
 pub fn write_file(workspace: &WorkspaceEnv, path: &str, content: &str) -> Result<(), String> {
     let body = r#"
 path = arg(1)

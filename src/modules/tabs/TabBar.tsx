@@ -26,6 +26,7 @@ import {
   Globe02Icon,
   GoogleGeminiIcon,
   IncognitoIcon,
+  MusicNote01Icon,
   PencilEdit02Icon,
   PlusSignIcon,
 } from "@hugeicons/core-free-icons";
@@ -565,6 +566,16 @@ export function TabIcon({ tab }: { tab: Tab }) {
     return (
       <HugeiconsIcon
         icon={Globe02Icon}
+        size={14}
+        strokeWidth={2}
+        className="shrink-0"
+      />
+    );
+  }
+  if (tab.kind === "audio") {
+    return (
+      <HugeiconsIcon
+        icon={MusicNote01Icon}
         size={14}
         strokeWidth={2}
         className="shrink-0"

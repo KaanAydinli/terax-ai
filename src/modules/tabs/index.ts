@@ -9,6 +9,7 @@ export {
   type EditorTab,
   type PreviewTab,
   type MarkdownTab,
+  type AudioTab,
   type AiDiffTab,
   type GitDiffTab,
   type GitHistoryTab,

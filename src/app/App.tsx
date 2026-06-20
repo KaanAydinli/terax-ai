@@ -39,7 +39,7 @@ import {
 import type { PreviewPaneHandle } from "@/modules/preview";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import { isMarkdownPath } from "@/lib/utils";
+import { isAudioPath, isMarkdownPath } from "@/lib/utils";
 import {
   useGlobalShortcuts,
   type ShortcutHandlers,
@@ -157,6 +157,7 @@ export default function App() {
     pinTab,
     newPreviewTab,
     newMarkdownTab,
+    openAudioTab,
     setMarkdownView,
     openAiDiffTab,
     closeAiDiffTab,
@@ -543,9 +544,10 @@ export default function App() {
       // it to the raw editor. Other files default to preview (pin=false);
       // explicit actions like context-menu "Open" pass pin=true to persist.
       if (isMarkdownPath(path)) newMarkdownTab(path);
+      else if (isAudioPath(path)) openAudioTab(path);
       else openFileTab(path, pin ?? false);
     },
-    [openFileTab, newMarkdownTab],
+    [openFileTab, newMarkdownTab, openAudioTab],
   );
 
   const handlePathRenamed = useCallback(
@@ -614,7 +616,9 @@ export default function App() {
     return null;
   })();
   const explorerActiveFilePath =
-    activeTab?.kind === "editor" || activeTab?.kind === "markdown"
+    activeTab?.kind === "editor" ||
+    activeTab?.kind === "markdown" ||
+    activeTab?.kind === "audio"
       ? activeTab.path
       : null;
   const { sourceControl, toggleSourceControl, openGitGraphFromContext } =

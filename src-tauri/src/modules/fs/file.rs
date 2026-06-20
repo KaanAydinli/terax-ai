@@ -3,12 +3,14 @@ use std::time::UNIX_EPOCH;
 use std::{fs, io::Write};
 
 use serde::Serialize;
+use tauri::ipc::Response;
 use tauri::Emitter;
 use tempfile::NamedTempFile;
 
 use crate::modules::workspace::{resolve_path, WorkspaceEnv};
 
 const MAX_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+const MAX_BINARY_READ_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
 #[derive(Serialize)]
@@ -79,6 +81,34 @@ pub fn fs_read_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<Rea
         Ok(content) => Ok(ReadResult::Text { content, size }),
         Err(_) => Ok(ReadResult::Binary { size }),
     }
+}
+
+#[tauri::command]
+pub fn fs_read_binary_file(
+    path: String,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<Response, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        return super::ssh::read_binary_file(&workspace, &path, MAX_BINARY_READ_BYTES)
+            .map(Response::new);
+    }
+    let p = resolve_path(&path, &workspace);
+    let meta = std::fs::metadata(&p).map_err(|e| {
+        log::debug!("fs_read_binary_file stat({}) failed: {e}", p.display());
+        e.to_string()
+    })?;
+    if meta.len() > MAX_BINARY_READ_BYTES {
+        return Err(format!(
+            "file is too large: {} bytes exceeds {} byte limit",
+            meta.len(),
+            MAX_BINARY_READ_BYTES
+        ));
+    }
+    std::fs::read(&p).map(Response::new).map_err(|e| {
+        log::debug!("fs_read_binary_file read({}) failed: {e}", p.display());
+        e.to_string()
+    })
 }
 
 #[derive(Serialize, Clone)]

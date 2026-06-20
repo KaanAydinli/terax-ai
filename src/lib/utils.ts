@@ -8,3 +8,7 @@ export function cn(...inputs: ClassValue[]) {
 export function isMarkdownPath(path: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(path)
 }
+
+export function isAudioPath(path: string): boolean {
+  return /\.(wav|wave)$/i.test(path)
+}

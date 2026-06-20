@@ -155,11 +155,12 @@ describe("hydrateTabs", () => {
     ).toEqual([]);
   });
 
-  it("hydrates editor/preview/markdown as cold with derived titles", () => {
+  it("hydrates editor/preview/markdown/audio as cold with derived titles", () => {
     const serialized: SerializedTab[] = [
       { kind: "editor", path: "/a/foo.ts" },
       { kind: "preview", url: "http://localhost:5173/x" },
       { kind: "markdown", path: "/a/README.md" },
+      { kind: "audio", path: "/a/sample.wav" },
     ];
     const out = hydrateTabs(serialized, "s1", counter());
     expect(out.every((t) => t.cold === true)).toBe(true);
@@ -167,6 +168,7 @@ describe("hydrateTabs", () => {
       "foo.ts",
       "localhost:5173",
       "README.md",
+      "sample.wav",
     ]);
   });
 });
