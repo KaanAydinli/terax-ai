@@ -54,6 +54,7 @@ import {
   useSecondarySidebarPanel,
   useSidebarPanel,
 } from "@/modules/sidebar";
+import { TaskBoardPanel } from "@/modules/secondary-sidebar";
 import {
   SourceControlPanel,
   useSourceControlContext,
@@ -87,7 +88,7 @@ import {
 } from "@/modules/tabs/lib/useTabs";
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
 import { UpdaterDialog } from "@/modules/updater";
-import { useWorkspaceEnvStore } from "@/modules/workspace";
+import { useWorkspaceEnvStore, workspaceScopeKey } from "@/modules/workspace";
 import { LinkSquare02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -588,7 +589,6 @@ export default function App() {
           setRoot(space.id, fallback);
         }
       }
-
     },
     [handleDeletedEditorTabs, home, launchCwd],
   );
@@ -1041,6 +1041,12 @@ export default function App() {
   ]);
 
   const activeCwd = activeTerminalLeafCwd;
+  const taskBoardWorkspaceKey = useMemo(() => {
+    const path = (explorerRoot ?? activeCwd ?? home ?? "global")
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "");
+    return `${workspaceScopeKey(workspaceEnv)}:${path || "/"}`;
+  }, [explorerRoot, activeCwd, home, workspaceEnv]);
 
   const handleNewSpace = useCallback(() => {
     const { spaces, create, setActive } = useSpaces.getState();
@@ -1350,7 +1356,9 @@ export default function App() {
                   }
                 }}
               >
-                <div className="h-full min-h-0 border-l border-border/60 bg-card" />
+                <div className="h-full min-h-0 border-l border-border/60 bg-card">
+                  <TaskBoardPanel workspaceKey={taskBoardWorkspaceKey} />
+                </div>
               </ResizablePanel>
             </ResizablePanelGroup>
           </main>

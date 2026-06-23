@@ -12,6 +12,7 @@ export {
   DragOverlay,
   KeyboardSensor,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -22,4 +23,5 @@ export {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+export type { Modifier } from "@dnd-kit/core";
 export { CSS } from "@dnd-kit/utilities";
