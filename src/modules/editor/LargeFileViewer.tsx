@@ -14,6 +14,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildSharedExtensions } from "./lib/extensions";
+import { resolveLanguage } from "./lib/languageResolver";
 import { EDITOR_THEME_EXT } from "./lib/themes";
 
 const CHUNK_BYTES = 2 * 1024 * 1024;
@@ -45,6 +46,7 @@ export function LargeFileViewer({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
+  const languageCompartment = useRef(new Compartment());
 
   const editorThemeId = usePreferencesStore((s) => s.editorTheme);
 
@@ -116,6 +118,7 @@ export function LargeFileViewer({
       doc: "",
       parent: host,
       extensions: [
+        EditorView.theme({ "&": { height: "100%" } }),
         ...buildSharedExtensions(),
         lineNumbers(),
         highlightActiveLine(),
@@ -125,6 +128,7 @@ export function LargeFileViewer({
         EditorView.editable.of(false),
         EditorState.allowMultipleSelections.of(true),
         keymap.of([...searchKeymap, ...defaultKeymap]),
+        languageCompartment.current.of([]),
         themeCompartment.current.of(
           EDITOR_THEME_EXT[usePreferencesStore.getState().editorTheme] ??
             EDITOR_THEME_EXT.atomone,
@@ -132,6 +136,14 @@ export function LargeFileViewer({
       ],
     });
     viewRef.current = view;
+    let cancelled = false;
+
+    void resolveLanguage(path).then((lang) => {
+      if (cancelled || !lang) return;
+      viewRef.current?.dispatch({
+        effects: languageCompartment.current.reconfigure(lang),
+      });
+    });
 
     const onScroll = () => {
       const s = view.scrollDOM;
@@ -141,7 +153,6 @@ export function LargeFileViewer({
     };
     view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
 
-    let cancelled = false;
     void (async () => {
       for (let i = 0; i < MAX_INITIAL_CHUNKS; i++) {
         if (cancelled || eofRef.current) break;
