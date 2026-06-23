@@ -1,17 +1,19 @@
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { currentWorkspaceEnv } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { currentWorkspaceEnv } from "@/modules/workspace";
-import { usePreferencesStore } from "@/modules/settings/preferences";
 
 type ReadResult =
   | { kind: "text"; content: string; size: number }
   | { kind: "binary"; size: number }
+  | { kind: "largetext"; size: number }
   | { kind: "toolarge"; size: number; limit: number };
 
 export type DocumentState =
   | { status: "loading" }
   | { status: "ready"; content: string; size: number }
   | { status: "binary"; size: number }
+  | { status: "largetext"; size: number }
   | { status: "toolarge"; size: number; limit: number }
   | { status: "error"; message: string };
 
@@ -74,7 +76,10 @@ export function useDocument({ path, onDirtyChange }: Options) {
     setDoc({ status: "loading" });
     setDirty(false);
 
-    invoke<ReadResult>("fs_read_file", { path, workspace: currentWorkspaceEnv() })
+    invoke<ReadResult>("fs_read_file", {
+      path,
+      workspace: currentWorkspaceEnv(),
+    })
       .then((res) => {
         if (cancelled) return;
         if (res.kind === "text") {
@@ -87,6 +92,8 @@ export function useDocument({ path, onDirtyChange }: Options) {
           });
         } else if (res.kind === "binary") {
           setDoc({ status: "binary", size: res.size });
+        } else if (res.kind === "largetext") {
+          setDoc({ status: "largetext", size: res.size });
         } else if (res.kind === "toolarge") {
           setDoc({
             status: "toolarge",
@@ -121,6 +128,8 @@ export function useDocument({ path, onDirtyChange }: Options) {
           setDoc({ status: "ready", content: res.content, size: res.size });
         } else if (res.kind === "binary") {
           setDoc({ status: "binary", size: res.size });
+        } else if (res.kind === "largetext") {
+          setDoc({ status: "largetext", size: res.size });
         } else if (res.kind === "toolarge") {
           setDoc({ status: "toolarge", size: res.size, limit: res.limit });
         }

@@ -10,7 +10,7 @@ use super::search::{ListFilesResult, SearchHit, SearchResult};
 use super::tree::{DirEntry, EntryKind};
 use crate::modules::workspace::{ssh_command, WorkspaceEnv};
 
-const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_READ_BYTES: u64 = 20 * 1024 * 1024;
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
 const PY_HELPER: &str = r#"
@@ -232,9 +232,62 @@ print(os.path.realpath(arg(1)))
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
+const SEEK_READ_BODY: &str = r#"
+path = arg(1)
+off = int_arg(2)
+n = int_arg(3)
+with open(path, "rb") as f:
+    f.seek(off)
+    remaining = n
+    while remaining > 0:
+        chunk = f.read(min(65536, remaining))
+        if not chunk:
+            break
+        sys.stdout.buffer.write(chunk)
+        remaining -= len(chunk)
+"#;
+
+fn seek_read(
+    workspace: &WorkspaceEnv,
+    path: &str,
+    offset: u64,
+    max_bytes: u64,
+) -> Result<Vec<u8>, String> {
+    run_python(
+        workspace,
+        SEEK_READ_BODY,
+        &[path, &offset.to_string(), &max_bytes.to_string()],
+    )
+}
+
+pub fn read_text_chunk(
+    workspace: &WorkspaceEnv,
+    path: &str,
+    offset: u64,
+    max_bytes: u64,
+) -> Result<super::file::ChunkResult, String> {
+    use super::file::{process_chunk, ChunkResult};
+    let total = stat(workspace, path)?.size;
+    if offset >= total {
+        return Ok(ChunkResult {
+            content: String::new(),
+            start: offset,
+            end: total,
+            total,
+            eof: true,
+        });
+    }
+    let raw = seek_read(workspace, path, offset, max_bytes)?;
+    Ok(process_chunk(raw, offset, total))
+}
+
 pub fn read_file(workspace: &WorkspaceEnv, path: &str) -> Result<ReadResult, String> {
     let meta = stat(workspace, path)?;
     if meta.size > MAX_READ_BYTES {
+        let head = seek_read(workspace, path, 0, BINARY_SNIFF_BYTES as u64)?;
+        if super::file::head_looks_like_text(&head) {
+            return Ok(ReadResult::LargeText { size: meta.size });
+        }
         return Ok(ReadResult::TooLarge {
             size: meta.size,
             limit: MAX_READ_BYTES,

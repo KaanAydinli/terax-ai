@@ -11,6 +11,7 @@ import {
 import { type Extension, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { vim } from "@replit/codemirror-vim";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import {
   forwardRef,
@@ -20,7 +21,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { LargeFileViewer } from "./LargeFileViewer";
 import { inlineCompletion } from "./lib/autocomplete/inlineExtension";
 import {
   buildSharedExtensions,
@@ -31,6 +32,8 @@ import { resolveLanguage } from "./lib/languageResolver";
 import { EDITOR_THEME_EXT } from "./lib/themes";
 import { useDocument } from "./lib/useDocument";
 import { initVimGlobals, vimHandlersExtension } from "./lib/vim";
+
+const SYNTAX_HIGHLIGHT_MAX_BYTES = 4 * 1024 * 1024;
 
 initVimGlobals();
 
@@ -224,6 +227,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
       const ext = path.split(".").pop()?.toLowerCase() ?? null;
       languageRef.current = ext;
       if (doc.status !== "ready") return;
+      if (doc.size > SYNTAX_HIGHLIGHT_MAX_BYTES) return;
       let cancelled = false;
       const resolve = async (): Promise<Extension> => {
         if (path.toLowerCase().endsWith(".terax-theme")) {
@@ -311,6 +315,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
         </div>
       );
     }
+    if (doc.status === "largetext") {
+      return <LargeFileViewer path={path} size={doc.size} />;
+    }
     if (doc.status === "error") {
       return (
         <div className="flex h-full items-center justify-center px-6 text-center text-xs text-destructive">
@@ -320,7 +327,15 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
     }
     if (doc.status === "binary" || doc.status === "toolarge") {
       const ext = path.split(".").pop()?.toLowerCase() ?? "";
-      const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"].includes(ext);
+      const isImage = [
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "svg",
+        "ico",
+      ].includes(ext);
       const isVideo = ["mp4", "webm", "ogg", "mov"].includes(ext);
       const isAudio = ["mp3", "wav", "flac", "aac", "m4a"].includes(ext);
       const isPdf = ext === "pdf";
@@ -336,10 +351,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
                 decoding="async"
                 className="max-w-full max-h-full object-contain rounded-md border border-border shadow-sm"
                 style={{
-                  backgroundImage: 'conic-gradient(#e5e7eb 0.25turn, #f3f4f6 0.25turn 0.5turn, #e5e7eb 0.5turn 0.75turn, #f3f4f6 0.75turn)',
-                  backgroundSize: '20px 20px',
+                  backgroundImage:
+                    "conic-gradient(#e5e7eb 0.25turn, #f3f4f6 0.25turn 0.5turn, #e5e7eb 0.5turn 0.75turn, #f3f4f6 0.75turn)",
+                  backgroundSize: "20px 20px",
                 }}
-                alt={path.split('/').pop()}
+                alt={path.split("/").pop()}
               />
             )}
             {isVideo && (
@@ -364,7 +380,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
               <iframe
                 src={assetUrl}
                 className="w-full h-full border-none"
-                title={path.split('/').pop()}
+                title={path.split("/").pop()}
               />
             )}
           </div>

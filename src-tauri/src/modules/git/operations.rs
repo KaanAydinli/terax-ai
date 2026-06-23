@@ -1130,6 +1130,11 @@ fn read_remote_worktree_text(
             size,
             max: limit,
         }),
+        ReadResult::LargeText { size } => Err(GitError::FileTooLarge {
+            path: Path::new(&remote_path).to_path_buf(),
+            size,
+            max: crate::modules::fs::file::MAX_READ_BYTES,
+        }),
     }
 }
 

@@ -1,3 +1,4 @@
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 use std::{fs, io::Write};
@@ -9,7 +10,7 @@ use tempfile::NamedTempFile;
 
 use crate::modules::workspace::{resolve_path, WorkspaceEnv};
 
-const MAX_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+pub const MAX_READ_BYTES: u64 = 20 * 1024 * 1024; // 20 MB
 const MAX_BINARY_READ_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
@@ -23,11 +24,70 @@ pub enum ReadResult {
     Binary {
         size: u64,
     },
-    /// File exceeds MAX_READ_BYTES. UI decides whether to offer "open anyway".
+    LargeText {
+        size: u64,
+    },
     TooLarge {
         size: u64,
         limit: u64,
     },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkResult {
+    pub content: String,
+    pub start: u64,
+    pub end: u64,
+    pub total: u64,
+    pub eof: bool,
+}
+
+pub fn head_looks_like_text(head: &[u8]) -> bool {
+    let sniff_len = head.len().min(BINARY_SNIFF_BYTES);
+    if head[..sniff_len].contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(head) {
+        Ok(_) => true,
+        Err(e) => e.error_len().is_none(),
+    }
+}
+
+pub fn process_chunk(raw: Vec<u8>, offset: u64, total: u64) -> ChunkResult {
+    if raw.is_empty() {
+        return ChunkResult {
+            content: String::new(),
+            start: offset,
+            end: offset.max(total),
+            total,
+            eof: true,
+        };
+    }
+    let read_end = offset + raw.len() as u64;
+    let at_file_end = read_end >= total;
+
+    let mut keep = raw.len();
+    if !at_file_end {
+        if let Some(pos) = raw.iter().rposition(|&b| b == b'\n') {
+            keep = pos + 1;
+        }
+    }
+    let slice = &raw[..keep];
+
+    let valid_len = match std::str::from_utf8(slice) {
+        Ok(_) => slice.len(),
+        Err(e) => e.valid_up_to(),
+    };
+    let content = String::from_utf8_lossy(&slice[..valid_len]).into_owned();
+    let end = offset + valid_len as u64;
+    ChunkResult {
+        content,
+        start: offset,
+        end,
+        total,
+        eof: end >= total,
+    }
 }
 
 #[derive(Serialize)]
@@ -59,6 +119,10 @@ pub fn fs_read_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<Rea
 
     let size = meta.len();
     if size > MAX_READ_BYTES {
+        let head = read_head(&p, BINARY_SNIFF_BYTES).unwrap_or_default();
+        if head_looks_like_text(&head) {
+            return Ok(ReadResult::LargeText { size });
+        }
         return Ok(ReadResult::TooLarge {
             size,
             limit: MAX_READ_BYTES,
@@ -81,6 +145,44 @@ pub fn fs_read_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<Rea
         Ok(content) => Ok(ReadResult::Text { content, size }),
         Err(_) => Ok(ReadResult::Binary { size }),
     }
+}
+
+fn read_head(p: &Path, n: usize) -> std::io::Result<Vec<u8>> {
+    let f = std::fs::File::open(p)?;
+    let mut buf = Vec::with_capacity(n);
+    f.take(n as u64).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+#[tauri::command]
+pub fn fs_read_text_chunk(
+    path: String,
+    offset: u64,
+    max_bytes: u64,
+    workspace: Option<WorkspaceEnv>,
+) -> Result<ChunkResult, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        return super::ssh::read_text_chunk(&workspace, &path, offset, max_bytes);
+    }
+    let p = resolve_path(&path, &workspace);
+    let total = std::fs::metadata(&p).map_err(|e| e.to_string())?.len();
+    if offset >= total {
+        return Ok(ChunkResult {
+            content: String::new(),
+            start: offset,
+            end: total,
+            total,
+            eof: true,
+        });
+    }
+    let mut f = std::fs::File::open(&p).map_err(|e| e.to_string())?;
+    f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+    let mut raw = Vec::new();
+    f.take(max_bytes)
+        .read_to_end(&mut raw)
+        .map_err(|e| e.to_string())?;
+    Ok(process_chunk(raw, offset, total))
 }
 
 #[tauri::command]
@@ -259,6 +361,108 @@ mod tests {
         std::fs::write(&target, b"old").unwrap();
         write_atomic(&target, b"new").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
+    }
+
+    #[test]
+    fn chunk_trims_to_last_newline_when_not_at_eof() {
+        let raw = b"aaa\nbbb\nccc".to_vec();
+        let r = process_chunk(raw, 0, 100);
+        assert_eq!(r.content, "aaa\nbbb\n");
+        assert_eq!(r.end, 8);
+        assert!(!r.eof);
+    }
+
+    #[test]
+    fn chunk_keeps_everything_at_eof() {
+        let raw = b"aaa\nbbb\nccc".to_vec();
+        let r = process_chunk(raw, 0, 11);
+        assert_eq!(r.content, "aaa\nbbb\nccc");
+        assert_eq!(r.end, 11);
+        assert!(r.eof);
+    }
+
+    #[test]
+    fn chunk_makes_progress_on_a_line_longer_than_the_window() {
+        let raw = b"a very long single line".to_vec();
+        let r = process_chunk(raw.clone(), 0, 1000);
+        assert_eq!(r.content, "a very long single line");
+        assert_eq!(r.end, raw.len() as u64);
+        assert!(!r.eof);
+    }
+
+    #[test]
+    fn chunk_does_not_split_a_multibyte_char_mid_line() {
+        let mut raw = b"abc".to_vec();
+        raw.push(0xC3);
+        let r = process_chunk(raw, 0, 1000);
+        assert_eq!(r.content, "abc");
+        assert_eq!(r.end, 3);
+        assert!(!r.eof);
+    }
+
+    #[test]
+    fn empty_chunk_is_eof() {
+        let r = process_chunk(Vec::new(), 50, 50);
+        assert_eq!(r.content, "");
+        assert!(r.eof);
+    }
+
+    #[test]
+    fn chunked_read_reconstructs_the_whole_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("big.jsonl");
+        let mut original = String::new();
+        for i in 0..5000 {
+            original.push_str(&format!("{{\"i\":{i},\"v\":\"café\"}}\n"));
+        }
+        std::fs::write(&f, &original).unwrap();
+        let path = f.to_string_lossy().into_owned();
+
+        let mut rebuilt = String::new();
+        let mut offset = 0u64;
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            assert!(guard < 100_000, "chunk loop did not terminate");
+            let r = fs_read_text_chunk(path.clone(), offset, 64, None).unwrap();
+            rebuilt.push_str(&r.content);
+            offset = r.end;
+            if r.eof {
+                break;
+            }
+            assert!(r.end > r.start || !r.content.is_empty());
+        }
+        assert_eq!(rebuilt, original);
+    }
+
+    #[test]
+    fn read_file_classifies_large_text_vs_too_large_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = (MAX_READ_BYTES + 4096) as usize;
+
+        let text = dir.path().join("big.txt");
+        std::fs::write(&text, "a".repeat(big)).unwrap();
+        assert!(matches!(
+            fs_read_file(text.to_string_lossy().into_owned(), None).unwrap(),
+            ReadResult::LargeText { .. }
+        ));
+
+        let bin = dir.path().join("big.bin");
+        let mut bytes = vec![0u8; big];
+        bytes[10] = 0;
+        std::fs::write(&bin, &bytes).unwrap();
+        assert!(matches!(
+            fs_read_file(bin.to_string_lossy().into_owned(), None).unwrap(),
+            ReadResult::TooLarge { .. }
+        ));
+    }
+
+    #[test]
+    fn head_sniff_accepts_text_rejects_binary() {
+        assert!(head_looks_like_text(b"{\"a\":1}\n{\"b\":2}\n"));
+        assert!(!head_looks_like_text(b"PNG\0\x89data"));
+        // Truncated trailing multibyte char is still text.
+        assert!(head_looks_like_text(&[b'h', b'i', 0xC3]));
     }
 
     #[cfg(unix)]
