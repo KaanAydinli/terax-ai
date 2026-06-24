@@ -28,6 +28,7 @@ import {
   languageCompartment,
   vimCompartment,
 } from "./lib/extensions";
+import { countRows, isJsonl } from "./lib/jsonl";
 import { resolveLanguage } from "./lib/languageResolver";
 import { EDITOR_THEME_EXT } from "./lib/themes";
 import { useDocument } from "./lib/useDocument";
@@ -252,6 +253,12 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
       };
     }, [path, doc.status]);
 
+    const rowCount = useMemo(
+      () =>
+        doc.status === "ready" && isJsonl(path) ? countRows(doc.content) : null,
+      [doc, path],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
@@ -421,6 +428,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
             searchKeymap: true,
           }}
         />
+        {rowCount != null && (
+          <div className="flex items-center gap-2 border-t border-border/60 px-3 py-1 text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground/80">JSONL</span>
+            <span className="opacity-40">·</span>
+            <span>{rowCount.toLocaleString()} rows</span>
+          </div>
+        )}
       </div>
     );
   },

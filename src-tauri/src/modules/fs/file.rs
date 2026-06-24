@@ -185,6 +185,37 @@ pub fn fs_read_text_chunk(
     Ok(process_chunk(raw, offset, total))
 }
 
+pub fn count_lines_reader<R: Read>(mut r: R) -> std::io::Result<u64> {
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut newlines: u64 = 0;
+    let mut last: Option<u8> = None;
+    loop {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        let chunk = &buf[..n];
+        newlines += chunk.iter().filter(|&&b| b == b'\n').count() as u64;
+        last = Some(chunk[n - 1]);
+    }
+    Ok(match last {
+        None => 0,
+        Some(b'\n') => newlines,
+        Some(_) => newlines + 1,
+    })
+}
+
+#[tauri::command]
+pub fn fs_count_lines(path: String, workspace: Option<WorkspaceEnv>) -> Result<u64, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    if workspace.is_ssh() {
+        return super::ssh::count_lines(&workspace, &path);
+    }
+    let p = resolve_path(&path, &workspace);
+    let f = std::fs::File::open(&p).map_err(|e| e.to_string())?;
+    count_lines_reader(f).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn fs_read_binary_file(
     path: String,
@@ -433,6 +464,37 @@ mod tests {
             assert!(r.end > r.start || !r.content.is_empty());
         }
         assert_eq!(rebuilt, original);
+    }
+
+    #[test]
+    fn counts_rows_with_trailing_newline() {
+        assert_eq!(count_lines_reader(&b"a\nb\nc\n"[..]).unwrap(), 3);
+    }
+
+    #[test]
+    fn counts_rows_without_trailing_newline() {
+        assert_eq!(count_lines_reader(&b"a\nb\nc"[..]).unwrap(), 3);
+    }
+
+    #[test]
+    fn counts_single_line_without_newline() {
+        assert_eq!(count_lines_reader(&b"{\"a\":1}"[..]).unwrap(), 1);
+    }
+
+    #[test]
+    fn empty_file_has_zero_rows() {
+        assert_eq!(count_lines_reader(&b""[..]).unwrap(), 0);
+    }
+
+    #[test]
+    fn fs_count_lines_counts_a_real_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("x.jsonl");
+        std::fs::write(&f, "a\nb\nc\n").unwrap();
+        assert_eq!(
+            fs_count_lines(f.to_string_lossy().into_owned(), None).unwrap(),
+            3
+        );
     }
 
     #[test]

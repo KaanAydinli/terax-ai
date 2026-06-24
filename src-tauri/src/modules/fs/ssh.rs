@@ -281,6 +281,32 @@ pub fn read_text_chunk(
     Ok(process_chunk(raw, offset, total))
 }
 
+pub fn count_lines(workspace: &WorkspaceEnv, path: &str) -> Result<u64, String> {
+    let body = r#"
+path = arg(1)
+n = 0
+last = b""
+with open(path, "rb") as f:
+    while True:
+        chunk = f.read(1 << 20)
+        if not chunk:
+            break
+        n += chunk.count(b"\n")
+        last = chunk[-1:]
+if last == b"":
+    print(0)
+elif last == b"\n":
+    print(n)
+else:
+    print(n + 1)
+"#;
+    let out = run_python(workspace, body, &[path])?;
+    String::from_utf8_lossy(&out)
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| e.to_string())
+}
+
 pub fn read_file(workspace: &WorkspaceEnv, path: &str) -> Result<ReadResult, String> {
     let meta = stat(workspace, path)?;
     if meta.size > MAX_READ_BYTES {

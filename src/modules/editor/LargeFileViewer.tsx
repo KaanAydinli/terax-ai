@@ -14,6 +14,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildSharedExtensions } from "./lib/extensions";
+import { isJsonl } from "./lib/jsonl";
 import { resolveLanguage } from "./lib/languageResolver";
 import { EDITOR_THEME_EXT } from "./lib/themes";
 
@@ -59,6 +60,7 @@ export function LargeFileViewer({
   const [eof, setEof] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rowCount, setRowCount] = useState<number | null>(null);
 
   const loadChunk = useCallback(async (): Promise<void> => {
     if (loadingRef.current || eofRef.current) return;
@@ -180,6 +182,23 @@ export function LargeFileViewer({
     });
   }, [editorThemeId]);
 
+  useEffect(() => {
+    setRowCount(null);
+    if (!isJsonl(path)) return;
+    let cancelled = false;
+    void invoke<number>("fs_count_lines", {
+      path,
+      workspace: currentWorkspaceEnv(),
+    })
+      .then((n) => {
+        if (!cancelled) setRowCount(n);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
   const pct =
     total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 100;
 
@@ -194,6 +213,16 @@ export function LargeFileViewer({
         <span>
           {formatBytes(loaded)} / {formatBytes(total)} ({pct}%)
         </span>
+        {isJsonl(path) && (
+          <>
+            <span className="opacity-40">·</span>
+            <span>
+              {rowCount == null
+                ? "counting rows…"
+                : `${rowCount.toLocaleString()} rows`}
+            </span>
+          </>
+        )}
         {loading && <span className="animate-pulse">loading…</span>}
         {error && <span className="text-destructive">{error}</span>}
         <div className="ml-auto flex items-center gap-3">
