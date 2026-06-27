@@ -3,8 +3,16 @@ pub mod modules;
 use modules::{agent, fs, git, history, net, pty, secrets, shell, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+#[cfg(not(target_os = "macos"))]
+use tauri::{LogicalSize, WindowEvent};
 #[cfg(target_os = "macos")]
 use tauri::{PhysicalPosition, WindowEvent};
+
+/// Minimum window dimensions, re-asserted at runtime. WebKitGTK ignores the
+/// config-time min size for transparent client-side-decorated windows, so
+/// dragging can collapse the window to its content size — we clamp it back.
+const MAIN_MIN_W: f64 = 680.0;
+const MAIN_MIN_H: f64 = 460.0;
 use tauri_plugin_window_state::StateFlags;
 
 /// Drained on first read so HMR / re-mounts can't replay the launch dir.
@@ -149,6 +157,28 @@ pub fn run() {
                     ) {
                         if let Some(settings) = handle.get_webview_window("settings") {
                             let _ = settings.close();
+                        }
+                    }
+                });
+            }
+
+            // Linux/Windows render a custom titlebar on a transparent,
+            // decorationless window. WebKitGTK drops the geometry size-hints in
+            // that mode, so a drag can shrink the window down to an icon. Re-
+            // assert the min size and clamp any undersized resize back up.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(main) = _app.get_webview_window("main") {
+                let _ = main.set_min_size(Some(LogicalSize::new(MAIN_MIN_W, MAIN_MIN_H)));
+                let win = main.clone();
+                main.on_window_event(move |event| {
+                    if let WindowEvent::Resized(size) = event {
+                        let scale = win.scale_factor().unwrap_or(1.0);
+                        let logical = size.to_logical::<f64>(scale);
+                        if logical.width < MAIN_MIN_W || logical.height < MAIN_MIN_H {
+                            let _ = win.set_size(LogicalSize::new(
+                                logical.width.max(MAIN_MIN_W),
+                                logical.height.max(MAIN_MIN_H),
+                            ));
                         }
                     }
                 });
