@@ -55,6 +55,18 @@ export function buildSharedExtensions(): Extension[] {
       ".cm-lineNumbers .cm-gutterElement": {
         opacity: "0.55",
       },
+      // Git change markers on the line-number gutter (see gitGutter.ts).
+      ".cm-lineNumbers .cm-gitAdded": {
+        color: "rgb(110, 200, 120)",
+        opacity: "1",
+        fontWeight: "600",
+      },
+      ".cm-lineNumbers .cm-gitDeleted": {
+        color: "rgb(220, 90, 90)",
+        opacity: "1",
+        fontWeight: "600",
+        borderBottom: "2px solid rgba(220, 90, 90, 0.6)",
+      },
       ".cm-foldGutter": { width: "10px" },
       ".cm-foldGutter .cm-gutterElement": {
         color: "var(--muted-foreground)",

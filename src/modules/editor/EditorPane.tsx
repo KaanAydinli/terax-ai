@@ -1,4 +1,5 @@
 import { getKey } from "@/modules/ai/lib/keyring";
+import { native } from "@/modules/ai/lib/native";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { onKeysChanged } from "@/modules/settings/store";
 import { redo, undo } from "@codemirror/commands";
@@ -28,6 +29,7 @@ import {
   languageCompartment,
   vimCompartment,
 } from "./lib/extensions";
+import { gitChangeGutter, setGitBaseline } from "./lib/gitGutter";
 import { countRows, isJsonl } from "./lib/jsonl";
 import { resolveLanguage } from "./lib/languageResolver";
 import { EDITOR_THEME_EXT } from "./lib/themes";
@@ -168,6 +170,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
           close: () => onCloseRef.current?.(),
         })),
         ...buildSharedExtensions(),
+        gitChangeGutter(),
         languageCompartment.of([]),
         inlineCompletion({
           getPrefs: () => {
@@ -248,6 +251,38 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
           effects: languageCompartment.reconfigure(extension),
         });
       });
+      return () => {
+        cancelled = true;
+      };
+    }, [path, doc.status]);
+
+    // Fetch the file's HEAD content as the baseline for the git change gutter.
+    // The gutter extension diffs it against the live buffer, so added/modified
+    // lines light up green and deletions get a red marker — including unsaved
+    // edits. Non-git files (or errors) clear the baseline, hiding the markers.
+    useEffect(() => {
+      if (doc.status !== "ready") return;
+      let cancelled = false;
+      const applyBaseline = (baseline: string | null) => {
+        if (cancelled) return;
+        cmRef.current?.view?.dispatch({
+          effects: setGitBaseline.of(baseline),
+        });
+      };
+      void (async () => {
+        try {
+          const dir = path.replace(/[/\\][^/\\]*$/, "") || path;
+          const repo = await native.gitResolveRepo(dir);
+          if (!repo) {
+            applyBaseline(null);
+            return;
+          }
+          const res = await native.gitDiffContent(repo.repoRoot, path, true);
+          applyBaseline(res.isBinary ? null : res.originalContent);
+        } catch {
+          applyBaseline(null);
+        }
+      })();
       return () => {
         cancelled = true;
       };
