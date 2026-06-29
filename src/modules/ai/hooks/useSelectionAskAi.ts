@@ -6,8 +6,9 @@ type Params = {
 };
 
 /**
- * Tracks text selections inside the terminal / editor and surfaces the
- * "Ask AI" popup at the pointer. Dismisses on any click outside the AI surface.
+ * Tracks text selections inside the editor and surfaces the "Ask AI" popup at
+ * the pointer. Dismisses on any click outside the AI surface. Terminal
+ * selections are intentionally excluded.
  */
 export function useSelectionAskAi({
   captureActiveSelection,
@@ -32,27 +33,9 @@ export function useSelectionAskAi({
       if (isInsideAi(e.target)) return;
       setAskPopup(null);
     };
-    const onUp = (e: MouseEvent) => {
-      if (isInsideAi(e.target)) return;
-      const el = e.target as HTMLElement | null;
-      const inContentArea = el?.closest?.(".xterm, .cm-editor");
-      if (!inContentArea) return;
-      // Defer one tick so xterm/CodeMirror finalize the selection.
-      setTimeout(() => {
-        const text = captureActiveSelection();
-        if (text && text.trim().length > 0) {
-          setAskPopup({ x: e.clientX, y: e.clientY });
-        } else {
-          setAskPopup(null);
-        }
-      }, 0);
-    };
-
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("mouseup", onUp);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("mouseup", onUp);
     };
   }, [captureActiveSelection]);
 
