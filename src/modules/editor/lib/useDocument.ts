@@ -113,8 +113,11 @@ export function useDocument({ path, onDirtyChange }: Options) {
 
   // Skipped while dirty (never clobber unsaved edits) and when disk already
   // matches the buffer (self-save / duplicate watcher event → no re-render).
-  const reload = useCallback((): boolean => {
-    if (dirtyRef.current) return false;
+  // `force` bypasses the dirty guard so AI writes land in an open buffer even
+  // when the user has unsaved edits (otherwise the AI change is silently
+  // dropped and the next user save overwrites it on disk).
+  const reload = useCallback((force = false): boolean => {
+    if (dirtyRef.current && !force) return false;
     void invoke<ReadResult>("fs_read_file", {
       path,
       workspace: currentWorkspaceEnv(),

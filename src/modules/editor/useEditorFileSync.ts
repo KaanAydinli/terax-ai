@@ -35,7 +35,7 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
       for (const e of tabs) {
         if (e.kind !== "editor") continue;
         if (e.path !== t.path) continue;
-        editorRefs.current.get(e.id)?.reload();
+        editorRefs.current.get(e.id)?.reload(true);
       }
     }
   }, [tabs, editorRefs]);
@@ -52,7 +52,9 @@ export function useEditorFileSync({ tabs, tabsRef, editorRefs }: Params) {
           for (const t of currentTabs) {
             if (t.kind !== "editor") continue;
             if (t.path.replace(/\\/g, "/") === normalizedPath) {
-              editorRefs.current.get(t.id)?.reload();
+              // AI / programmatic writes force-apply even over unsaved edits so
+              // the open tab reflects the change instead of silently dropping it.
+              editorRefs.current.get(t.id)?.reload(true);
             }
           }
         },

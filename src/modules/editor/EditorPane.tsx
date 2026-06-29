@@ -48,8 +48,11 @@ export type EditorPaneHandle = {
   focus: () => void;
   getSelection: () => string | null;
   getPath: () => string;
-  /** Re-read the file from disk. Skips silently if the buffer is dirty. */
-  reload: () => boolean;
+  /**
+   * Re-read the file from disk. Skips silently if the buffer is dirty unless
+   * `force` is set (AI writes force-apply to keep an open tab in sync).
+   */
+  reload: (force?: boolean) => boolean;
   /** Move the cursor to a 1-based line and center it, once content is ready. */
   gotoLine: (line: number) => void;
   /** Apply CodeMirror's undo/redo commands. */
@@ -333,7 +336,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, Props>(
           return view.state.sliceDoc(from, to);
         },
         getPath: () => path,
-        reload: () => reloadRef.current(),
+        reload: (force?: boolean) => reloadRef.current(force),
         gotoLine: (line: number) => {
           pendingLineRef.current = line;
           applyPendingGoto();
