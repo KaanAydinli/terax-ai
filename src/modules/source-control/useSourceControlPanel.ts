@@ -655,6 +655,11 @@ export function useSourceControlPanel(
         setActionError(null);
         setActionMessage(null);
         setSelectionTransition("none");
+        // Selection unchanged, but the diff tab may have been closed. Re-open
+        // it (the tab store focuses an existing tab or recreates a closed one)
+        // instead of silently doing nothing.
+        const file = status?.changedFiles.find((c) => c.path === entry.path);
+        openSelection(nextSelection, repo.repoRoot, file);
         return;
       }
       setSelected(nextSelection);
@@ -795,6 +800,11 @@ export function useSourceControlPanel(
         setActionError(null);
         setActionMessage(null);
         setSelectionTransition("none");
+        // Selection unchanged, but the diff tab may have been closed. Re-open
+        // it (the tab store focuses an existing tab or recreates a closed one)
+        // instead of silently doing nothing.
+        const file = status?.changedFiles.find((c) => c.path === entry.path);
+        openSelection(nextSelection, repo.repoRoot, file);
         return;
       }
       setSelected(nextSelection);
