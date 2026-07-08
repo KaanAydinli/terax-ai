@@ -248,11 +248,11 @@ export function TabBar({
   }, [activeId]);
 
   return (
-    <div
-      ref={scrollRef}
-      data-tauri-drag-region
-      className="min-w-0 shrink overflow-x-auto"
-    >
+    // No data-tauri-drag-region on the strip: the inner w-max row covers every
+    // tab, so the only clicks that target this container land on its overflow
+    // scrollbar — a drag region there makes the window chase the cursor while
+    // scrubbing the scrollbar.
+    <div ref={scrollRef} className="min-w-0 shrink overflow-x-auto">
       <div className="flex w-max items-center gap-0.5">
         <Tabs
           value={String(activeId)}
