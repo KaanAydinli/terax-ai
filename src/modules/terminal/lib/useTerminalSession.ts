@@ -6,8 +6,8 @@ import {
   getSshHome,
   LOCAL_WORKSPACE,
   useWorkspaceEnvStore,
-  workspaceScopeKey,
   type WorkspaceEnv,
+  workspaceScopeKey,
 } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -114,6 +114,7 @@ type Session = {
     trackingReady: boolean;
     cwdCheckSeq: number;
     previousRemoteCwd: string | null;
+    pendingCommands: string[];
   } | null;
 };
 
@@ -126,6 +127,7 @@ type FileStat = {
 
 const sessions = new Map<number, Session>();
 let activeWorkspaceLeafId: number | null = null;
+const MAX_PENDING_SSH_COMMANDS = 64;
 
 // Block-overlay viewport listeners, keyed by leafId at module scope so the
 // overlay (a child) can subscribe before the parent effect creates the session.
@@ -333,7 +335,7 @@ function prepareTerminalWrite(
 }
 
 function captureRemoteSshInput(leafId: number, s: Session, data: string): void {
-  if (!s.autoSsh?.trackingReady) return;
+  if (!s.autoSsh) return;
   const commands = captureTerminalInput(s, data);
   for (const command of commands) trackRemoteSshCommand(leafId, s, command);
 }
@@ -344,14 +346,33 @@ function trackRemoteSshCommand(
   command: string,
 ): void {
   const auto = s.autoSsh;
-  if (!auto?.trackingReady) return;
+  if (!auto) return;
+  if (!auto.trackingReady) {
+    auto.pendingCommands.push(command);
+    if (auto.pendingCommands.length > MAX_PENDING_SSH_COMMANDS) {
+      auto.pendingCommands.splice(
+        0,
+        auto.pendingCommands.length - MAX_PENDING_SSH_COMMANDS,
+      );
+    }
+    return;
+  }
+  void applyRemoteCwdCommand(leafId, s, auto, command);
+}
+
+async function applyRemoteCwdCommand(
+  leafId: number,
+  s: Session,
+  auto: NonNullable<Session["autoSsh"]>,
+  command: string,
+): Promise<void> {
   const change = remoteCwdFromCommand(command, {
     current: s.lastCwd,
     home: auto.remoteHome,
     previous: auto.previousRemoteCwd,
   });
   if (!change) return;
-  void validateAndApplyRemoteCwd(leafId, s, auto, change.cwd, change.previous);
+  await validateAndApplyRemoteCwd(leafId, s, auto, change.cwd, change.previous);
 }
 
 async function validateAndApplyRemoteCwd(
@@ -479,6 +500,7 @@ async function activateSshWorkspace(
     trackingReady: false,
     cwdCheckSeq: 0,
     previousRemoteCwd: null,
+    pendingCommands: [],
   };
   s.autoSsh = marker;
   s.callbacks.onSsh?.(true);
@@ -525,6 +547,13 @@ async function refreshWhenSshReady(
       }
       marker.remoteHome = home;
       marker.trackingReady = true;
+      const pending = marker.pendingCommands.splice(0);
+      for (const command of pending) {
+        if (s.disposed || sessions.get(leafId) !== s || s.autoSsh !== marker) {
+          return;
+        }
+        await applyRemoteCwdCommand(leafId, s, marker, command);
+      }
       await getCurrentWebviewWindow().emit("fs:changed", { paths: [root] });
       return;
     } catch {

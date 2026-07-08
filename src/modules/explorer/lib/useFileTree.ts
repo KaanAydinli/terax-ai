@@ -1,11 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   useWorkspaceEnvStore,
   workspaceScopeKey,
 } from "@/modules/workspace";
-import { usePreferencesStore } from "@/modules/settings/preferences";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
 
 export type DirEntry = {
@@ -43,6 +43,7 @@ export function dirname(path: string): string {
 const EXPANSION_CACHE_LIMIT = 8;
 const SSH_AUTH_RETRY_MS = 800;
 const SSH_AUTH_RETRY_WINDOW_MS = 30_000;
+const SSH_TREE_POLL_MS = 5_000;
 const expansionCache = new Map<string, string[]>();
 
 function rememberExpansion(root: string, expanded: Set<string>): void {
@@ -317,6 +318,21 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   }, [fetchChildren]);
 
   useEffect(() => {
+    if (!rootPath || workspace.kind !== "ssh") return;
+    const poll = () => {
+      if (document.visibilityState === "hidden") return;
+      const loaded = nodesRef.current;
+      const loadedPaths = [rootPath, ...expandedRef.current].filter(
+        (path) => loaded[path]?.status === "loaded",
+      );
+      for (const path of loadedPaths) void fetchChildren(path);
+    };
+    const interval = window.setInterval(poll, SSH_TREE_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [rootPath, workspace.kind, fetchChildren]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: this only refetches loaded paths on pref or root changes, not ordinary tree edits.
+  useEffect(() => {
     if (!rootPath) return;
     const loadedPaths = Object.entries(nodes)
       .filter(([, state]) => state.status === "loaded")
@@ -325,7 +341,6 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     // Re-list loaded directories when visibility or git-decoration prefs change.
     // `nodes` is intentionally omitted so ordinary tree edits don't refetch
     // every expanded directory.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHidden, gitDecorations, rootPath, fetchChildren]);
 
   const toggle = useCallback(
