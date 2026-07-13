@@ -132,6 +132,10 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                // Settings opens at its builder-time 900x700 every time —
+                // restoring a remembered maximized/fullscreen state made it
+                // reopen fullscreen by default.
+                .with_denylist(&["settings"])
                 .build(),
         )
         .plugin(tauri_plugin_autostart::Builder::new().build())
