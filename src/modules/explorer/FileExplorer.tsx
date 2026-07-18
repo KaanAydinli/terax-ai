@@ -7,6 +7,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
+  ArrowLeft01Icon,
   FileAddIcon,
   Folder01Icon,
   FolderAddIcon,
@@ -99,6 +100,17 @@ function basename(path: string): string {
 function parentOf(path: string, fallback: string): string {
   const i = path.lastIndexOf("/");
   return i > 0 ? path.slice(0, i) : fallback;
+}
+
+// Parent directory for the drill-up button; null at a filesystem root
+// ("/", "C:/") where there is nothing above to show.
+function parentRootOf(path: string): string | null {
+  const i = path.lastIndexOf("/");
+  if (i < 0) return null;
+  if (i === 0) return path.length > 1 ? "/" : null;
+  let parent = path.slice(0, i);
+  if (/^[A-Za-z]:$/.test(parent)) parent = `${parent}/`;
+  return parent === path ? null : parent;
 }
 
 function buildRows(
@@ -195,10 +207,18 @@ export const FileExplorer = memo(
     },
     ref,
   ) {
-    const tree = useFileTree(rootPath, { onPathRenamed, onPathDeleted });
+    // Drill-in override set by the folder dot: the explorer roots itself at
+    // that folder until the terminal cwd changes rootPath again.
+    const [drillRoot, setDrillRoot] = useState<string | null>(null);
+    useEffect(() => {
+      setDrillRoot(null);
+    }, [rootPath]);
+    const effectiveRoot = drillRoot ?? rootPath;
+
+    const tree = useFileTree(effectiveRoot, { onPathRenamed, onPathDeleted });
     const gitDecorations = usePreferencesStore((s) => s.explorerGitDecorations);
     const { lookup: lookupGitStatus } = useGitStatus(
-      rootPath,
+      effectiveRoot,
       gitDecorations ? gitStatus : null,
       gitDecorations,
     );
@@ -210,13 +230,13 @@ export const FileExplorer = memo(
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const { rows, entryIndexByPath } = useMemo(() => {
-      if (!rootPath) return { rows: [] as Row[], entryIndexByPath: new Map<string, number>() };
-      return buildRows(rootPath, tree, lookupGitStatus);
+      if (!effectiveRoot) return { rows: [] as Row[], entryIndexByPath: new Map<string, number>() };
+      return buildRows(effectiveRoot, tree, lookupGitStatus);
       // `tree` is intentionally omitted: its identity changes every render, but
       // the listed fields are the only inputs buildRows actually reads.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
-      rootPath,
+      effectiveRoot,
       tree.nodes,
       tree.expanded,
       tree.renaming,
@@ -224,14 +244,38 @@ export const FileExplorer = memo(
       lookupGitStatus,
     ]);
 
+    const enterDir = useCallback(
+      (path: string) => {
+        setDrillRoot(path === rootPath ? null : path);
+      },
+      [rootPath],
+    );
+
+    const goUp = useCallback(() => {
+      if (!effectiveRoot) return;
+      const parent = parentRootOf(effectiveRoot);
+      if (parent === null) return;
+      setDrillRoot(parent === rootPath ? null : parent);
+    }, [effectiveRoot, rootPath]);
+
+    const canGoUp =
+      effectiveRoot !== null && parentRootOf(effectiveRoot) !== null;
+
     const rowActions = useMemo<RowActions>(
       () => ({
         toggle: tree.toggle,
+        enterDir,
         beginRename: tree.beginRename,
         commitRename: tree.commitRename,
         cancelRename: tree.cancelRename,
       }),
-      [tree.toggle, tree.beginRename, tree.commitRename, tree.cancelRename],
+      [
+        tree.toggle,
+        enterDir,
+        tree.beginRename,
+        tree.commitRename,
+        tree.cancelRename,
+      ],
     );
     const renameInProgress =
       tree.renaming !== null || tree.pendingCreate !== null;
@@ -262,25 +306,26 @@ export const FileExplorer = memo(
       [entryIndexByPath, rows],
     );
     const dnd = useExplorerDnd({
-      rootPath: rootPath ?? "",
+      rootPath: effectiveRoot ?? "",
       isDir: isDirAt,
       onMove: tree.movePath,
     });
 
     const fileDrop = useExplorerFileDrop({
-      rootPath,
+      rootPath: effectiveRoot,
       isDir: isDirAt,
       onCopied: tree.refresh,
     });
 
     const dropTargetDir = dnd.dropTargetDir ?? fileDrop.externalTargetDir;
-    const rootIsDropTarget = dropTargetDir != null && dropTargetDir === rootPath;
+    const rootIsDropTarget =
+      dropTargetDir != null && dropTargetDir === effectiveRoot;
     useEffect(() => {
-      if (!dropTargetDir || dropTargetDir === rootPath) return;
+      if (!dropTargetDir || dropTargetDir === effectiveRoot) return;
       if (tree.expanded.has(dropTargetDir)) return;
       const id = window.setTimeout(() => tree.expand(dropTargetDir), 700);
       return () => window.clearTimeout(id);
-    }, [dropTargetDir, rootPath, tree.expanded, tree.expand]);
+    }, [dropTargetDir, effectiveRoot, tree.expanded, tree.expand]);
 
     useEffect(() => {
       if (selectedPath && !entryIndexByPath.has(selectedPath)) {
@@ -352,7 +397,7 @@ export const FileExplorer = memo(
       },
     });
 
-    if (!rootPath) {
+    if (!effectiveRoot) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
           <HugeiconsIcon
@@ -368,9 +413,11 @@ export const FileExplorer = memo(
       );
     }
 
-    const root = tree.nodes[rootPath];
+    const root = tree.nodes[effectiveRoot];
     const pendingAtRoot =
-      tree.pendingCreate?.parentPath === rootPath ? tree.pendingCreate : null;
+      tree.pendingCreate?.parentPath === effectiveRoot
+        ? tree.pendingCreate
+        : null;
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (tree.renaming || tree.pendingCreate || isSearchOpen) return;
@@ -426,7 +473,7 @@ export const FileExplorer = memo(
             tree.toggle(row.path);
           } else {
             const parent = row.path.slice(0, row.path.lastIndexOf("/"));
-            if (parent && parent !== rootPath) setSelectedPath(parent);
+            if (parent && parent !== effectiveRoot) setSelectedPath(parent);
           }
           break;
         }
@@ -494,18 +541,29 @@ export const FileExplorer = memo(
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border/60 px-2">
           <span
             className="flex flex-1 items-center truncate text-xs font-medium text-foreground/80"
-            title={rootPath}
+            title={effectiveRoot}
           >
             <img
-              src={folderIconUrl(basename(rootPath), false)}
+              src={folderIconUrl(basename(effectiveRoot), false)}
               alt=""
               height={15}
               width={15}
               className="mx-1.5"
             />
-            {basename(rootPath)}
+            {basename(effectiveRoot)}
           </span>
 
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-muted-foreground hover:text-foreground"
+            onClick={goUp}
+            disabled={!canGoUp}
+            title="Go up one folder"
+            aria-label="Go up one folder"
+          >
+            <HugeiconsIcon icon={ArrowLeft01Icon} size={13} strokeWidth={2} />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -521,7 +579,7 @@ export const FileExplorer = memo(
             variant="ghost"
             size="icon"
             className="size-6 text-muted-foreground hover:text-foreground"
-            onClick={() => tree.beginCreate(rootPath, "file")}
+            onClick={() => tree.beginCreate(effectiveRoot, "file")}
             title="New file"
           >
             <HugeiconsIcon icon={FileAddIcon} size={13} strokeWidth={2} />
@@ -530,7 +588,7 @@ export const FileExplorer = memo(
             variant="ghost"
             size="icon"
             className="size-6 text-muted-foreground hover:text-foreground"
-            onClick={() => tree.beginCreate(rootPath, "dir")}
+            onClick={() => tree.beginCreate(effectiveRoot, "dir")}
             title="New folder"
           >
             <HugeiconsIcon icon={FolderAddIcon} size={13} strokeWidth={2} />
@@ -539,7 +597,7 @@ export const FileExplorer = memo(
             variant="ghost"
             size="icon"
             className="size-6 text-muted-foreground hover:text-foreground"
-            onClick={() => tree.refresh(rootPath)}
+            onClick={() => tree.refresh(effectiveRoot)}
             title="Refresh"
           >
             <HugeiconsIcon icon={Refresh01Icon} size={12} strokeWidth={2} />
@@ -548,7 +606,7 @@ export const FileExplorer = memo(
 
         <ExplorerSearch
           ref={searchRef}
-          rootPath={rootPath}
+          rootPath={effectiveRoot}
           onOpenFile={onOpenFile}
           open={isSearchOpen}
           onRequestClose={() => setIsSearchOpen(false)}
@@ -696,7 +754,7 @@ export const FileExplorer = memo(
                       tree.beginCreate(
                         menuTarget.isDir
                           ? menuTarget.path
-                          : parentOf(menuTarget.path, rootPath),
+                          : parentOf(menuTarget.path, effectiveRoot),
                         "file",
                       )
                     }
@@ -709,7 +767,7 @@ export const FileExplorer = memo(
                       tree.beginCreate(
                         menuTarget.isDir
                           ? menuTarget.path
-                          : parentOf(menuTarget.path, rootPath),
+                          : parentOf(menuTarget.path, effectiveRoot),
                         "dir",
                       )
                     }
@@ -726,7 +784,9 @@ export const FileExplorer = memo(
                   <ContextMenuItem
                     className={COMPACT_ITEM}
                     onSelect={() =>
-                      void copyToClipboard(relativePath(rootPath, menuTarget.path))
+                      void copyToClipboard(
+                        relativePath(effectiveRoot, menuTarget.path),
+                      )
                     }
                   >
                     Copy Relative Path
@@ -756,40 +816,40 @@ export const FileExplorer = memo(
                   {onRevealInTerminal && (
                     <ContextMenuItem
                       className={COMPACT_ITEM}
-                      onSelect={() => onRevealInTerminal(rootPath)}
+                      onSelect={() => onRevealInTerminal(effectiveRoot)}
                     >
                       Open in Terminal
                     </ContextMenuItem>
                   )}
                   <ContextMenuItem
                     className={COMPACT_ITEM}
-                    onSelect={() => void revealInFinder(rootPath)}
+                    onSelect={() => void revealInFinder(effectiveRoot)}
                   >
                     Reveal in Finder
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={COMPACT_ITEM}
-                    onSelect={() => tree.beginCreate(rootPath, "file")}
+                    onSelect={() => tree.beginCreate(effectiveRoot, "file")}
                   >
                     New File
                   </ContextMenuItem>
                   <ContextMenuItem
                     className={COMPACT_ITEM}
-                    onSelect={() => tree.beginCreate(rootPath, "dir")}
+                    onSelect={() => tree.beginCreate(effectiveRoot, "dir")}
                   >
                     New Folder
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     className={COMPACT_ITEM}
-                    onSelect={() => void copyToClipboard(rootPath)}
+                    onSelect={() => void copyToClipboard(effectiveRoot)}
                   >
                     Copy Path
                   </ContextMenuItem>
                   <ContextMenuItem
                     className={COMPACT_ITEM}
-                    onSelect={() => tree.refresh(rootPath)}
+                    onSelect={() => tree.refresh(effectiveRoot)}
                   >
                     Refresh
                   </ContextMenuItem>

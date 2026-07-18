@@ -1,6 +1,4 @@
 import { cn } from "@/lib/utils";
-import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { memo } from "react";
 import { InlineInput } from "./InlineInput";
 import { explorerGitTextClass } from "./lib/gitStatusColor";
@@ -9,6 +7,7 @@ import { fileIconUrl, folderIconUrl } from "./lib/iconResolver";
 
 export type RowActions = {
   toggle: (path: string) => void;
+  enterDir: (path: string) => void;
   beginRename: (path: string) => void;
   commitRename: (newName: string) => void | Promise<void>;
   cancelRename: () => void;
@@ -36,7 +35,6 @@ function EntryRowImpl(props: EntryRowProps) {
     path,
     name,
     isDir,
-    isExpanded,
     depth,
     actions,
     renameInProgress,
@@ -49,7 +47,9 @@ function EntryRowImpl(props: EntryRowProps) {
     gitignored = false,
   } = props;
 
-  const iconUrl = isDir ? folderIconUrl(name, isExpanded) : fileIconUrl(name);
+  const iconUrl = isDir
+    ? folderIconUrl(name, props.isExpanded)
+    : fileIconUrl(name);
   const paddingLeft = 6 + depth * 12;
 
   if (isRenaming) {
@@ -58,7 +58,6 @@ function EntryRowImpl(props: EntryRowProps) {
         className="flex h-6 w-full min-w-0 items-center gap-2 px-1.5 text-[13px]"
         style={{ paddingLeft }}
       >
-        <span className="size-3.5 shrink-0" />
         {iconUrl ? (
           <img src={iconUrl} alt="" className="size-4 shrink-0" />
         ) : (
@@ -81,13 +80,10 @@ function EntryRowImpl(props: EntryRowProps) {
   };
 
   return (
-    <button
-      type="button"
+    <div
       data-fs-path={path}
-      onClick={handleClick}
-      onDoubleClick={() => !isDir && actions.beginRename(path)}
       className={cn(
-        "group flex h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-1.5 text-left text-[13px] transition-colors hover:bg-accent/70",
+        "group flex h-6 w-full min-w-0 items-center rounded-sm transition-colors hover:bg-accent/70",
         isSelected
           ? "bg-accent text-foreground"
           : gitignored
@@ -95,35 +91,49 @@ function EntryRowImpl(props: EntryRowProps) {
             : "text-foreground/85",
         isDropTarget && "bg-primary/10 ring-1 ring-inset ring-primary/60",
       )}
-      style={{ paddingLeft }}
     >
-      <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
-        {isDir ? (
-          <HugeiconsIcon
-            icon={ArrowRight01Icon}
-            size={12}
-            strokeWidth={2.25}
-            className={cn("transition-transform", isExpanded && "rotate-90")}
-          />
-        ) : null}
-      </span>
-      {iconUrl ? (
-        <img src={iconUrl} alt="" className="size-4 shrink-0" />
-      ) : (
-        <span className="size-4 shrink-0" />
-      )}
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate",
-          !isSelected &&
-            !gitignored &&
-            gitStatusCode &&
-            explorerGitTextClass(gitStatusCode),
-        )}
+      <button
+        type="button"
+        onClick={handleClick}
+        onDoubleClick={() => !isDir && actions.beginRename(path)}
+        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 px-1.5 text-left text-[13px]"
+        style={{ paddingLeft }}
       >
-        {name}
-      </span>
-    </button>
+        {iconUrl ? (
+          <img src={iconUrl} alt="" className="size-4 shrink-0" />
+        ) : (
+          <span className="size-4 shrink-0" />
+        )}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            !isSelected &&
+              !gitignored &&
+              gitStatusCode &&
+              explorerGitTextClass(gitStatusCode),
+          )}
+        >
+          {name}
+        </span>
+      </button>
+      {isDir ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!renameInProgress) actions.enterDir(path);
+          }}
+          title="Enter folder"
+          aria-label={`Enter folder ${name}`}
+          className={cn(
+            "flex h-full w-5 shrink-0 cursor-pointer items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
+            isSelected && "opacity-100",
+          )}
+        >
+          <span className="size-1.5 rounded-full bg-current" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -147,7 +157,6 @@ export function PendingRow({
       className="flex h-6 w-full min-w-0 items-center gap-2 px-1.5 text-[13px]"
       style={{ paddingLeft: 6 + depth * 12 }}
     >
-      <span className="size-3.5 shrink-0" />
       <img
         src={
           kind === "dir" ? folderIconUrl("", false) : fileIconUrl("untitled")
@@ -180,7 +189,7 @@ export function StatusRow({
         "h-6 truncate px-2 text-[11px] leading-6",
         tone === "error" ? "text-destructive" : "text-muted-foreground",
       )}
-      style={{ paddingLeft: 6 + depth * 12 + 18 }}
+      style={{ paddingLeft: 6 + depth * 12 }}
     >
       {message}
     </div>
