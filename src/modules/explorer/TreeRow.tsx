@@ -125,7 +125,7 @@ function EntryRowImpl(props: EntryRowProps) {
           }}
           title="Enter folder"
           aria-label={`Enter folder ${name}`}
-          className="mr-2 flex h-full w-5 shrink-0 cursor-pointer items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          className="mr-3.5 flex h-full w-5 shrink-0 cursor-pointer items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
         >
           <span className="size-1.5 rounded-full bg-current" />
         </button>

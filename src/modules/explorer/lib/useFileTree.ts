@@ -108,6 +108,9 @@ export function useFileTree(rootPath: string | null, options?: Options) {
 
   const expandedRef = useRef(expanded);
   const nodesRef = useRef(nodes);
+  // Bumped on every root swap; in-flight fetches from a previous root drop
+  // their results instead of writing into the new tree.
+  const generationRef = useRef(0);
   const watchedRef = useRef<Set<string>>(new Set());
   const retryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
@@ -148,6 +151,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       setNodes((s) => ({ ...s, [path]: { status: "loading" } }));
     }
     const requestWorkspaceKey = workspaceKey;
+    const requestGeneration = generationRef.current;
     try {
       const entries = await invoke<DirEntry[]>("fs_read_dir", {
         path,
@@ -156,6 +160,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         workspace,
       });
       if (workspaceKeyRef.current !== requestWorkspaceKey) return;
+      if (generationRef.current !== requestGeneration) return;
       retryUntilRef.current.delete(path);
       const retryTimer = retryTimersRef.current.get(path);
       if (retryTimer) {
@@ -207,6 +212,7 @@ export function useFileTree(rootPath: string | null, options?: Options) {
       }
     } catch (e) {
       if (workspaceKeyRef.current !== requestWorkspaceKey) return;
+      if (generationRef.current !== requestGeneration) return;
       const message = String(e);
       if (workspace.kind === "ssh" && isPendingSshAuthError(message)) {
         const now = Date.now();
@@ -240,9 +246,12 @@ export function useFileTree(rootPath: string | null, options?: Options) {
   // Root change → restore the cached expansion for this root, re-scope watches,
   // and persist the outgoing root's expansion on the way out.
   useEffect(() => {
+    generationRef.current += 1;
     if (!rootPath) {
       setNodes({});
+      nodesRef.current = {};
       setExpanded(new Set());
+      expandedRef.current = new Set();
       setPendingCreate(null);
       setRenaming(null);
       return;
@@ -253,7 +262,14 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     const cacheKey = expansionKey(workspaceKey, rootPath);
     const restored = recallExpansion(cacheKey);
     setExpanded(new Set(restored));
+    expandedRef.current = new Set(restored);
+    // Refs reset synchronously: in-flight completions and the fetches fired
+    // below must see the cleared tree, not the pre-swap state a pending
+    // setNodes flush has not applied yet. A stale ref here can make
+    // sameDirListing discard the new root's first listing, leaving the
+    // explorer permanently empty.
     setNodes({});
+    nodesRef.current = {};
 
     const toWatch = [rootPath, ...restored];
     void fetchChildren(rootPath);
@@ -336,7 +352,8 @@ export function useFileTree(rootPath: string | null, options?: Options) {
     if (!rootPath) return;
     const loadedPaths = Object.entries(nodes)
       .filter(([, state]) => state.status === "loaded")
-      .map(([path]) => path);
+      .map(([path]) => path)
+      .filter((path) => isUnder(path, rootPath));
     for (const path of loadedPaths) void fetchChildren(path);
     // Re-list loaded directories when visibility or git-decoration prefs change.
     // `nodes` is intentionally omitted so ordinary tree edits don't refetch
